@@ -1,9 +1,9 @@
 from emoji import emojize
 
 DATABASE = "database.sqlite"
-BOT_TOKEN = "489890323:AAEMNRt1inFpiJ6vaBGTJSlVsBaQR6dnUwc"
+BOT_TOKEN = ""
 TEMP_FOLDER = 'temp'
-NUMBER_OF_ENTRIES_ON_PAGE = 6
+NUMBER_OF_ENTRIES_ON_PAGE = 10
 plus_emo = emojize(":heavy_plus_sign:", use_aliases=True)
 minus_emo = emojize(":heavy_minus_sign:", use_aliases=True)
 key_emo = emojize(":key:", use_aliases=True)
@@ -16,3 +16,11 @@ exm_mark_emo = emojize(":heavy_exclamation_mark:", use_aliases=True)
 
 
 new_line = '\n'
+
+
+try:
+    from realtyboard.local_settings import *
+except ImportError:
+    pass
+
+
