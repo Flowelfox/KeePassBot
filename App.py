@@ -142,7 +142,8 @@ def not_opened(bot,update):
 
     """Removing file in temp"""
     os.remove(TEMP_FOLDER + '/' + update.message.from_user.name + '.kdbx')
-    os.remove(TEMP_FOLDER + '/' + update.message.from_user.name + '.key')
+    if user.key_file_needed:
+        os.remove(TEMP_FOLDER + '/' + update.message.from_user.name + '.key')
 
     """Sending message"""
     if not user.is_opened:
