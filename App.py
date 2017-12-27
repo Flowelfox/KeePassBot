@@ -6,7 +6,8 @@ import math
 import telegram
 from emoji import emojize
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, BaseFilter, CallbackQueryHandler
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, BaseFilter, CallbackQueryHandler, run_async, \
+    JobQueue
 import logging
 import xml.dom.minidom as minidom
 
@@ -19,8 +20,6 @@ bot = telegram.Bot(token=BOT_TOKEN)
 updater = Updater(token=BOT_TOKEN)
 dispatcher = updater.dispatcher
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',level=logging.INFO)
-
-opened_databases = {}
 
 def chunks(l, n):
     """Yield successive n-sized chunks from l."""
@@ -192,27 +191,16 @@ def show_group(bot,update):
             bot.send_message(chat_id=update.callback_query.message.chat_id, text="Send me key-file to open database")
 
         return
-
-
-
-
-
-
-    keepass = opened_databases[update.callback_query.from_user.name]
+    try:
+        keepass = opened_databases[update.callback_query.from_user.name]
+    except KeyError as e:
+        logging.error("Key error: " + str(e))
+        bot.answer_callback_query(update.callback_query.id)
+        return
 
 
     if data == "Lock":
-        keepass.close()
-
-        user.is_opened = False
-        user.save()
-        bot.send_message(chat_id=update.callback_query.message.chat_id, text="Database closed")
-        if user.password_needed and user.key_file_needed:
-            bot.send_message(chat_id=update.callback_query.message.chat_id, text="Please send me key-file and then password to open database")
-        elif user.password_needed and not user.key_file_needed:
-            bot.send_message(chat_id=update.callback_query.message.chat_id, text="Send me password to open database")
-        elif not user.password_needed and user.key_file_needed:
-            bot.send_message(chat_id=update.callback_query.message.chat_id, text="Send me key-file to open database")
+        close_proces(update.callback_query.from_user.name,update.callback_query.message.chat_id)
 
         bot.answer_callback_query(update.callback_query.id)
         return
@@ -256,25 +244,35 @@ def show_group(bot,update):
 
     bot.answer_callback_query(update.callback_query.id)
 
+
 def close(bot,update):
+    username = update.message.from_user.name
+    chat_id = update.message.chat_id
+    close_proces(username, chat_id)
+
+def close_proces(username, chat_id):
     try:
-        global opened_databases
-        opened_databases[update.message.from_user.name].close()
+        opened_databases[username].close()
+        del opened_databases[username]
     except KeyError as e:
         logging.error("Key error: " + str(e))
 
-    user = User.get_or_none(username=update.message.from_user.name)
+    user = User.get_or_none(username=username)
     user.is_opened = False
+    bot.delete_message(chat_id=chat_id, message_id=user.interface_message_id)
     user.save()
 
-    bot.send_message(chat_id=update.message.chat_id, text="Database closed")
+    bot.send_message(chat_id=chat_id, text="Database closed")
     if user.password_needed and user.key_file_needed:
-        bot.send_message(chat_id=update.message.chat_id,
+        bot.send_message(chat_id=chat_id,
                          text="Please send me key-file and then password to open database")
+
     elif user.password_needed and not user.key_file_needed:
-        bot.send_message(chat_id=update.message.chat_id, text="Send me password to open database")
+        bot.send_message(chat_id=chat_id, text="Send me password to open database")
     elif not user.password_needed and user.key_file_needed:
-        bot.send_message(chat_id=update.message.chat_id, text="Send me key-file to open database")
+        bot.send_message(chat_id=chat_id, text="Send me key-file to open database")
+
+
 
 def delete_database(bot,update):
     user = User.get_or_none(username=update.message.from_user.name)
