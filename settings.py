@@ -20,7 +20,7 @@ opened_databases = {}
 
 
 try:
-    from realtyboard.local_settings import *
+    from local_settings import *
 except ImportError:
     pass
 
