@@ -1,4 +1,5 @@
 from peewee import CharField, DateTimeField, BlobField, Model, SqliteDatabase, DoesNotExist, BooleanField, IntegerField
+from playhouse.migrate import migrate, SqliteMigrator
 
 from settings import DATABASE
 
@@ -20,6 +21,7 @@ class User(BaseModel):
     interface_message_id = IntegerField(default=0)
     key_file_needed = BooleanField(default=False)
     password_needed = BooleanField(default=True)
+    create_state = BooleanField(default=False)
 
     class Meta:
         order_by = ('username',)
@@ -37,5 +39,16 @@ def create_tables():
     database.connect()
     database.create_tables([User])
 
+def create_custom_columns():
+    database.connect()
+    migrator = SqliteMigrator(database)
+    create_state = BooleanField(default=False)
+
+    migrate(
+        migrator.add_column('user', 'create_state', create_state),
+    )
+
 if __name__ == "__main__":
-    create_tables()
+    pass
+    #create_tables()
+    #create_custom_columns()
