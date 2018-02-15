@@ -13,6 +13,7 @@ arrow_up_emo = emojize(":arrow_up:", use_aliases=True)
 folder_emo = emojize(":file_folder:", use_aliases=True)
 lock_emo = emojize(":lock:", use_aliases=True)
 exm_mark_emo = emojize(":heavy_exclamation_mark:", use_aliases=True)
+x_emo = emojize(":x:", use_aliases=True)
 
 new_line = '\n'
 

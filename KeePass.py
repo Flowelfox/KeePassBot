@@ -57,6 +57,9 @@ class BaseKeePass(ABC):
     def get_parent(self):
         return self._parent
 
+    def delete(self):
+        raise NotImplemented("Implement this method in child")
+
 
 class KeePass:
     def __init__(self, path):
@@ -67,6 +70,7 @@ class KeePass:
         self.opened = False
         self.create_state = None
         self.root_group = None
+        self.user = None
 
     def __str__(self):
         if not self.opened:
@@ -94,6 +98,7 @@ class KeePass:
              InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")])
 
         if self.active_item and self.active_item.type == "Entry":
+            message_buttons.append([InlineKeyboardButton(text=x_emo, callback_data="Delete")])
             InlineKeyboardMarkup(message_buttons)
         else:
             i = 0
@@ -109,6 +114,7 @@ class KeePass:
 
     def open(self, username, password=None, keyfile_path=None):
         user = User.get_or_none(username=username)
+        self.user = user
 
         try:
             with libkeepass.open(filename=self.path, password=password, keyfile=keyfile_path, unprotect=False) as kdb:
@@ -218,42 +224,38 @@ class KeePass:
         self.create_state = CreateState()
         return self.create_state.get_message()
 
-    def end_creating(self, user):
+    def end_creating(self):
         if self.create_state:
 
             group_item = self.active_item
             while not group_item.type == "Group":
                 group_item = group_item.get_parent()
 
-            entry = KeeEntry(group_item.get_root(), group_item,
-                             UUID=(base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), IconID=0,
-                             rawstrings=self.create_state.get_rawstrings())
+            entry_obj = KeeEntry.get_xml_element(uuid=(base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), icon_id=0,
+                                                 strings=self.create_state.get_rawstrings())
 
-            entry_xml = entry.get_xml_element()
             parser = objectify.makeparser()
-            entry_obj = objectify.fromstring(etree.tounicode(entry_xml), parser)
+            entry_obj = objectify.fromstring(etree.tounicode(entry_obj), parser)
 
             group_item.get_group_obj().append(entry_obj)
             group_item.refresh_items()
 
-            if user is None:
-                self.create_state = None
-                return False
-
-            """Write to new file"""
-            with open(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx', 'wb') as output:
-                self.kdb.write_to(output)
-
-            """Saving to database"""
-            with open(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx', 'rb+') as file:
-                user.file = file.read()
-                user.save()
-
-            """Removing downloaded file"""
-            os.remove(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx')
-
+            self.update_kdb_in_db()
             self.create_state = None
-            return True
+
+    def update_kdb_in_db(self):
+
+        """Write to new file"""
+        with open(TEMP_FOLDER + '/' + str(self.user.id) + str(self.user.username) + '.kdbx', 'wb') as output:
+            self.kdb.write_to(output)
+
+        """Saving to database"""
+        with open(TEMP_FOLDER + '/' + str(self.user.id) + str(self.user.username) + '.kdbx', 'rb+') as file:
+            self.user.file = file.read()
+            self.user.save()
+
+        """Removing downloaded file"""
+        os.remove(TEMP_FOLDER + '/' + str(self.user.id) + str(self.user.username) + '.kdbx')
 
 
 class CreateState():
@@ -271,15 +273,7 @@ class CreateState():
     def get_rawstrings(self):
         rawstrings = []
         for key, value in self.fields.items():
-            st_elm = objectify.Element("String")
-
-            objectify.SubElement(st_elm, "Key")
-            st_elm.Key = key
-
-            objectify.SubElement(st_elm, "Value")
-            st_elm.Value = value
-
-            rawstrings.append(st_elm)
+            rawstrings.append((key, value))
 
         return rawstrings
 
@@ -406,7 +400,7 @@ class KeeGroup(BaseKeePass):
 
     def __init_entries(self):
         for entry in self._group_obj.findall('Entry'):
-            self.items.append(KeeEntry(self._root, self, entry.UUID.text, entry.IconID.text, entry.findall('String')))
+            self.items.append(KeeEntry(self._root, self, entry))
             self.size += 1
 
     def __init_groups(self):
@@ -480,22 +474,24 @@ class KeeGroup(BaseKeePass):
 
 class KeeEntry(BaseKeePass):
 
-    def __init__(self, root, parent, UUID, IconID, rawstrings):
+    def __init__(self, root, parent, entry_obj):
         super().__init__(root, parent)
         self.type = "Entry"
-        self.uuid = UUID
-        self.icon_id = int(IconID)
+        self._entry_obj = entry_obj
+        self.uuid = self._entry_obj.UUID.text
+        self.icon_id = int(self._entry_obj.IconID.text)
         self.strings = []
-        self.__init_strings(rawstrings)
+        self.__init_strings()
         self.__set_name()
         self.__set_password()
 
     def __str__(self):
         return self.name
 
-    def __init_strings(self, rawstrings):
-        for rawstring in rawstrings:
-            self.strings.append(EntryString(rawstring.Key.text, rawstring.Value.text))
+    def __init_strings(self):
+        strings = self._entry_obj.findall('String')
+        for string in strings:
+            self.strings.append(EntryString(string.Key.text, string.Value.text))
             self.size += 1
 
     def __set_name(self):
@@ -508,26 +504,15 @@ class KeeEntry(BaseKeePass):
             if string.key == "Password":
                 self.password = string.value
 
-    def next_page(self):
-        if self.page < self.size / NUMBER_OF_ENTRIES_ON_PAGE:
-            self.page += 1
-        else:
-            raise IOError("Already last page")
-
-    def previous_page(self):
-        if self.page > 1:
-            self.page -= 1
-        else:
-            raise IOError("Already first page")
-
-    def get_xml_element(self):
+    @classmethod
+    def get_xml_element(cls, uuid, icon_id, strings):
         entry = Element("Entry")
 
-        uuid = SubElement(entry, 'UUID')
-        uuid.text = self.uuid
+        uuid_el = SubElement(entry, 'UUID')
+        uuid_el.text = uuid
 
         iconID = SubElement(entry, 'IconID')
-        iconID.text = str(self.icon_id)
+        iconID.text = str(icon_id)
 
         SubElement(entry, "ForegroundColor")
         SubElement(entry, "BackgroundColor")
@@ -562,8 +547,8 @@ class KeeEntry(BaseKeePass):
         # Times-------------------
 
         # Strings ----------
-        for string in self.strings:
-            entry.append(string.get_xml_element())
+        for key, value in strings:
+            entry.append(EntryString.get_xml_element(key, value))
 
         # Autotype -----------
         autotype = SubElement(entry, "AutoType")
@@ -577,20 +562,28 @@ class KeeEntry(BaseKeePass):
 
         return entry
 
+    def delete(self):
+        # TODO: Implement deletion
+        self.deactivate()
+        del self._entry_obj
+        self.active_item.refresh_items()
+        self._root.update_kdb_in_db()
+
 
 class EntryString():
     def __init__(self, key, value=None):
         self.key = key
         self.value = value
 
-    def get_xml_element(self):
+    @classmethod
+    def get_xml_element(cls, key, value):
         string = Element('String')
 
-        key = SubElement(string, 'Key')
-        key.text = self.key
+        key_el = SubElement(string, 'Key')
+        key_el.text = key
 
-        value = SubElement(string, 'Value')
-        value.text = self.value
+        value_el = SubElement(string, 'Value')
+        value_el.text = value
 
         return string
 

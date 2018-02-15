@@ -229,6 +229,13 @@ def show_group(bot,update):
             bot.answer_callback_query(update.callback_query.id)
             return
 
+    if data == "Delete":
+        if keepass.active_item:
+            keepass.active_item.delete()
+        else:
+            bot.answer_callback_query(update.callback_query.id)
+            return
+
     if len(data) == 24:
         keepass.get_item_by_uuid(data).activate()
 
@@ -281,26 +288,23 @@ def create_query(bot,update):
                 bot.answer_callback_query(update.callback_query.id)
                 return
 
-        if keepass.end_creating(user):
-            user.create_state = False
-            user.save()
-            message_text, message_markup = keepass.get_message()
-            bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
-                                  message_id=user.interface_message_id,
-                                  text=message_text,
-                                  reply_markup=message_markup)
-            bot.send_message(chat_id=update.callback_query.message.chat_id,
-                             text="Entry created")
-        else:
-            bot.send_message(chat_id=update.callback_query.message.chat_id,
-                             text="Some error")
+        keepass.end_creating()
+        user.create_state = False
+        user.save()
+        message_text, message_markup = keepass.get_message()
+        bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
+                              message_id=user.interface_message_id,
+                              text=message_text,
+                              reply_markup=message_markup)
+        bot.send_message(chat_id=update.callback_query.message.chat_id,
+                         text="Entry created")
         bot.answer_callback_query(update.callback_query.id)
         return
 
     elif data == "Back":
         user.create_state = False
         user.save()
-        keepass.end_creating(user)
+        keepass.end_creating()
 
         message_text, message_markup = keepass.get_message()
         bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
