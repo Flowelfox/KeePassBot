@@ -244,6 +244,105 @@ def show_group(bot,update):
 
     bot.answer_callback_query(update.callback_query.id)
 
+#create item function
+def create(bot,update):
+    user = User.get_or_none(username=update.message.from_user.name)
+
+    keepass = opened_databases[update.message.from_user.name]
+
+    #Entering in create state
+    user.create_state = True
+    user.save()
+    message_text,message_markup = keepass.create_new_item()
+
+    try:
+        bot.edit_message_text(chat_id=update.message.chat_id,
+                              message_id=user.interface_message_id,
+                              text=message_text,
+                              reply_markup=message_markup,
+                              parse_mode=telegram.ParseMode.HTML)
+    except Exception as e:
+        print(e)
+
+    bot.send_message(chat_id=update.message.chat_id,
+                     text="Click on the field name to set the value for it.\nSend the text to set the value.\nBold fields are required.\nYou can use the arrows to switch between fields.")
+
+#create querys handler
+def create_query(bot,update):
+    data = update.callback_query.data.replace("create_","")
+    user = User.get_or_none(username=update.callback_query.from_user.name)
+    keepass = opened_databases[update.callback_query.from_user.name]
+
+    if data == "done":
+        for field in keepass.create_state.req_fields:
+            if not keepass.create_state.fields[field]:
+                bot.send_message(chat_id=update.callback_query.message.chat_id,
+                                 text="Please fill required fields")
+                bot.answer_callback_query(update.callback_query.id)
+                return
+
+
+        user.create_state = False
+        user.save()
+        keepass.end_creating()
+        bot.answer_callback_query(update.callback_query.id)
+        return
+
+    elif data == "Back":
+        user.create_state = False
+        user.save()
+        keepass.end_creating()
+
+        message_text, message_markup = keepass.get_message()
+        bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
+                              message_id=user.interface_message_id,
+                              text=message_text,
+                              reply_markup=message_markup)
+
+        bot.answer_callback_query(update.callback_query.id)
+        return
+    elif data == "Left":
+        keepass.create_state.prev_field()
+        bot.answer_callback_query(update.callback_query.id)
+    elif data == "Right":
+        keepass.create_state.next_field()
+        bot.answer_callback_query(update.callback_query.id)
+    elif data == "generate_password":
+        keepass.create_state.generate_password()
+    else:
+        keepass.create_state.set_cur_field(data)
+
+    message_text,message_markup = keepass.create_state.get_message()
+    try:
+        bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
+                              message_id=user.interface_message_id,
+                              text=message_text,
+                              reply_markup=message_markup,
+                              parse_mode=telegram.ParseMode.HTML)
+
+    except Exception as e:
+        print(e)
+
+    bot.answer_callback_query(update.callback_query.id)
+
+def message_in_create(bot,update):
+    user = User.get_or_none(username=update.message.from_user.name)
+    keepass = opened_databases[update.message.from_user.name]
+
+    keepass.create_state.set_cur_field_value(update.message.text)
+    keepass.create_state.next_field()
+    message_text, message_markup = keepass.create_state.get_message()
+    try:
+        bot.edit_message_text(chat_id=update.message.chat_id,
+                              message_id=user.interface_message_id,
+                              text=message_text,
+                              reply_markup=message_markup,
+                              parse_mode=telegram.ParseMode.HTML)
+
+    except Exception as e:
+        print(e)
+
+
 
 def close(bot,update):
     username = update.message.from_user.name
@@ -312,6 +411,18 @@ not_opened_handler = MessageHandler(CustomFilters.user_exists & CustomFilters.pa
 #not exist
 database_add_handler = MessageHandler(CustomFilters.user_exists & Filters.document & CustomFilters.is_database_file  & (~ CustomFilters.password_database_exist), database_add)
 
+#user exists
+#not document
+#db exist
+#opened
+#in create state
+message_in_create_handler =  MessageHandler(CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened & CustomFilters.is_user_in_create_state,message_in_create)
+
+#user exists
+#not document
+#db exist
+#opened
+create_item_handler =  CommandHandler("create", create, filters=CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened)
 
 #user exists
 #not document
@@ -319,7 +430,10 @@ database_add_handler = MessageHandler(CustomFilters.user_exists & Filters.docume
 #opened
 search_handler = CommandHandler("search", search, filters=CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened)
 
+create_query_handler = CallbackQueryHandler(create_query,pattern=r"create_.*")
+
 show_group_handler = CallbackQueryHandler(show_group)
+
 #db exists
 #opened
 close_handler = CommandHandler('close', close,filters=CustomFilters.password_database_exist & CustomFilters.is_database_opened)
@@ -334,7 +448,10 @@ dispatcher.add_handler(not_exists_handler)
 dispatcher.add_handler(database_not_exist_handler)
 dispatcher.add_handler(not_opened_handler)
 dispatcher.add_handler(database_add_handler)
+dispatcher.add_handler(create_item_handler)
+dispatcher.add_handler(message_in_create_handler)
 dispatcher.add_handler(search_handler)
+dispatcher.add_handler(create_query_handler)
 dispatcher.add_handler(show_group_handler)
 dispatcher.add_handler(close_handler)
 dispatcher.add_handler(unknown_handler)
@@ -348,15 +465,15 @@ print("Stoping bot...")
 
 
 users = User.select().where(User.is_opened==True)
-for user in users:
+for userr in users:
     try:
-        opened_databases[user.username].close()
+        opened_databases[userr.username].close()
     except KeyError as e:
         logging.error("Key error: " + str(e))
 
 
-    user.is_opened = False
-    user.save()
+    userr.is_opened = False
+    userr.save()
 
 
 

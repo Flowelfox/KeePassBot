@@ -1,5 +1,15 @@
+import base64
+import uuid
 from abc import ABC, abstractmethod
+from pprint import pprint
 
+from lxml.etree import Element, SubElement
+from lxml import etree
+from lxml import objectify
+
+
+
+import datetime
 import libkeepass
 import math
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -44,6 +54,7 @@ class BaseKeePass(ABC):
 
 class KeePass(BaseKeePass):
     def __init__(self, path):
+        # TODO: Rewrite code that we have keepass and group seperated
         super().__init__(self,self)
         self.name = "KeePassBot"
         self.type = "Group"
@@ -52,6 +63,7 @@ class KeePass(BaseKeePass):
         self.path = path
         self.opened = False
         self.items = []
+        self.create_state = None
 
     def __str__(self):
         if not self.opened:
@@ -205,6 +217,131 @@ class KeePass(BaseKeePass):
 
         temp_group.activate()
 
+    def create_new_item(self):
+        self.create_state = CreateState()
+        return self.create_state.get_message()
+
+    def end_creating(self):
+        if self.create_state:
+            entry = KeeEntry(self.active_item,self.active_item,UUID = (base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), IconID = 0, rawstrings=self.create_state.get_rawstrings())
+            entry_xml = entry.get_xml_element()
+            group_item = self.active_item
+            while not group_item.type == "Group":
+                group_item = group_item._parent
+
+
+            parser = objectify.makeparser()
+            objectify.SubElement(group_item._group_obj, objectify.fromstring(etree.tounicode(entry_xml),parser))
+
+            print(etree.tounicode(group_item._group_obj, pretty_print=True))
+
+            self.create_state = None
+
+
+class CreateState():
+    def __init__(self):
+        self.fields = {"Title": None,
+                  "Username": None,
+                  "Password": None,
+                  "URL": None,
+                  "Notes": None}
+        self.req_fields = ["Title", "Username", "Password"]
+        self.current_field = "Title"
+        # Entry or Group
+        self.type = "Entry"
+
+    def get_rawstrings(self):
+        rawstrings = []
+        for key,value in self.fields.items():
+            st_elm = objectify.Element("String")
+
+            objectify.SubElement(st_elm, "Key")
+            st_elm.Key = key
+
+            objectify.SubElement(st_elm, "Value")
+            st_elm.Value = value
+
+            rawstrings.append(st_elm)
+
+        return rawstrings
+
+    def get_message(self):
+        message_text = self.__generate_text()
+        message_markup = self.__generate_keyboard()
+
+        return message_text, message_markup
+    def set_cur_field_value(self,value):
+        self.fields[self.current_field] = value
+
+    def set_cur_field(self,field_name):
+        self.current_field = field_name
+
+    def next_field(self):
+        finded = False
+        for field in self.fields.keys():
+            if finded:
+                self.current_field = field
+                break
+            if self.current_field == field:
+                finded = True
+
+    def prev_field(self):
+        prev_field = list(self.fields.keys())[0]
+        for field in self.fields.keys():
+            if self.current_field == field:
+                self.current_field = prev_field
+                break
+
+            prev_field = field
+    def generate_password(self):
+        from random import sample as rsample
+
+        s = "abcdefghijklmnopqrstuvwxyz01234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        passlen = 8
+        gen_password = "".join(rsample(s, passlen))
+
+        prev_field = self.current_field
+        self.set_cur_field("Password")
+        self.set_cur_field_value(gen_password)
+        self.set_cur_field(prev_field)
+
+    def __generate_text(self):
+        message_text = "_______Create new_______" + new_line
+        for field in self.fields.keys():
+            if self.current_field == field:
+                message_text += f"{arrow_right_emo}"
+            else:
+                message_text += "      "
+
+
+            if field in self.req_fields:
+                message_text += f"<b>{field}</b>: "
+            else:
+                message_text += f"{field}: "
+
+            message_text += str(self.fields.get(field,"")) + new_line
+
+        return message_text
+
+    def __generate_keyboard(self):
+        message_buttons = []
+
+        message_buttons.append(
+            [InlineKeyboardButton(text=arrow_left_emo, callback_data="create_Left"),
+             InlineKeyboardButton(text=arrow_up_emo, callback_data="create_Back"),
+             InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
+             InlineKeyboardButton(text=arrow_right_emo, callback_data="create_Right")])
+
+        for field in self.fields.keys():
+            if field == "Password":
+                message_buttons.append([InlineKeyboardButton(text=field, callback_data=f"create_{field}"),InlineKeyboardButton(text="Generate", callback_data="create_generate_password")])
+            else:
+                message_buttons.append([InlineKeyboardButton(text=field, callback_data=f"create_{field}")])
+
+
+        message_buttons.append([InlineKeyboardButton(text="---Done---", callback_data="create_done")])
+
+        return InlineKeyboardMarkup(message_buttons)
 
 class KeeGroup(BaseKeePass):
     def __init__(self, root, parent,group_obj,fake=False,items=None):
@@ -235,7 +372,7 @@ class KeeGroup(BaseKeePass):
 
     def __init_entries(self):
         for entry in self._group_obj.findall('Entry'):
-            self.items.append(KeeEntry(self._root,self, entry))
+            self.items.append(KeeEntry(self._root,self, entry.UUID.text, entry.IconID.text,entry.findall('String')))
             self.size += 1
 
     def __init_groups(self):
@@ -245,23 +382,23 @@ class KeeGroup(BaseKeePass):
 
 
 class KeeEntry(BaseKeePass):
-    def __init__(self, root,parent, entry_obj):
+
+    def __init__(self, root,parent, UUID, IconID,rawstrings):
         super().__init__(root,parent)
         self.type = "Entry"
-        self._entry_obj = entry_obj
-        self.uuid = entry_obj.UUID.text
-        self.icon_id = int(entry_obj.IconID.text)
+        self.uuid = UUID
+        self.icon_id = int(IconID)
         self.strings = []
-        self.__init_strings()
+        self.__init_strings(rawstrings)
         self.__set_name()
         self.__set_password()
 
     def __str__(self):
         return self.name
 
-    def __init_strings(self):
-        for string in self._entry_obj.findall('String'):
-            self.strings.append(EntryString(string))
+    def __init_strings(self,rawstrings):
+        for rawstring in rawstrings:
+            self.strings.append(EntryString(rawstring.Key.text,rawstring.Value.text))
             self.size += 1
 
     def __set_name(self):
@@ -286,12 +423,80 @@ class KeeEntry(BaseKeePass):
         else:
             raise IOError("Already first page")
 
+    def get_xml_element(self):
+        entry = Element("Entry")
+
+        uuid = SubElement(entry, 'UUID')
+        uuid.text = self.uuid
+
+        iconID = SubElement(entry,'IconID')
+        iconID.text = str(self.icon_id)
+
+        SubElement(entry,"ForegroundColor")
+        SubElement(entry,"BackgroundColor")
+        SubElement(entry,"OverrideURL")
+        SubElement(entry,"Tags")
+
+        # ------Times
+        times = SubElement(entry,"Times")
+
+        nowdate = datetime.datetime.now()
+
+        cr_time = SubElement(times,"CreationTime")
+        cr_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        lm_time = SubElement(times,"LastModificationTime")
+        lm_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        la_time = SubElement(times,"LastAccessTime")
+        la_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        et_time = SubElement(times,"ExpiryTime")
+        et_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        expires = SubElement(times,"Expires")
+        expires.text = "False"
+
+        usage_count = SubElement(times,"UsageCount")
+        usage_count.text = "0"
+
+        lch_time = SubElement(times,"LocationChanged")
+        lch_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Times-------------------
+
+        # Strings ----------
+        for string in self.strings:
+            entry.append(string.get_xml_element())
+
+        # Autotype -----------
+        autotype = SubElement(entry,"AutoType")
+        at_enabled = SubElement(autotype,"Enabled")
+        at_enabled.text = "True"
+
+        at_data_transfer_obfuscation = SubElement(autotype,"DataTransferObfuscation")
+        at_data_transfer_obfuscation.text = "0"
+
+        history = SubElement(entry,"History")
+
+        return entry
 
 class EntryString():
-    def __init__(self, string_obj):
-        self._string_obj = string_obj
-        self.key = string_obj.Key.text
-        self.value = string_obj.Value.text
+    def __init__(self, key,value=None):
+        self.key = key
+        self.value = value
+
+    def get_xml_element(self):
+        string = Element('String')
+
+
+        key = SubElement(string, 'Key')
+        key.text = self.key
+
+        value = SubElement(string, 'Value')
+        value.text = self.value
+
+        return string
+
 
     def __str__(self):
         return self.key + " = " + self.value
