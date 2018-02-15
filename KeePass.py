@@ -3,11 +3,10 @@ import uuid
 from abc import ABC, abstractmethod
 from pprint import pprint
 
+import lxml
 from lxml.etree import Element, SubElement
 from lxml import etree
 from lxml import objectify
-
-
 
 import datetime
 import libkeepass
@@ -20,13 +19,14 @@ from settings import *
 
 class BaseKeePass(ABC):
 
-    def __init__(self,root,parent):
+    def __init__(self, root, parent):
         self._root = root
         self._parent = parent
         self.page = 1
         self.size = 0
         self.is_active = False
         self.active_item = None
+        self.type = None
 
     def next_page(self):
 
@@ -42,7 +42,6 @@ class BaseKeePass(ABC):
         else:
             self.page = int(math.ceil(self.size / NUMBER_OF_ENTRIES_ON_PAGE))
 
-
     def activate(self):
         self._root.active_item = self
         self.is_active = True
@@ -52,36 +51,30 @@ class BaseKeePass(ABC):
         self.is_active = False
 
 
-class KeePass(BaseKeePass):
+class KeePass:
     def __init__(self, path):
-        # TODO: Rewrite code that we have keepass and group seperated
-        super().__init__(self,self)
-        self.name = "KeePassBot"
-        self.type = "Group"
-        self.active_item = self
-        self.is_active = True
+        self.name = "KeePassManager"
+        self.type = "Manager"
+        self.active_item = None
         self.path = path
         self.opened = False
-        self.items = []
         self.create_state = None
+        self.root_group = None
+
 
     def __str__(self):
         if not self.opened:
             raise IOError("Databse not opened")
 
-        string = ""
-        for item in self.items:
-            string += str(item)
+        return str(self.root_group)
 
-        return string
-
-    def __init_items(self):
+    def __init_root_group(self):
         if not self.opened:
             raise IOError("Databse not opened")
 
-        for item in self._root_obj.findall('./Root/Group/Group'):
-            self.items.append(KeeGroup(self,self, item))
-            self.size += 1
+        root_group = self._root_obj.find('./Root/Group')
+        pass
+        self.root_group = KeeGroup(self, None, root_group)
 
     def __generate_keyboard(self):
         if not self.opened:
@@ -94,7 +87,6 @@ class KeePass(BaseKeePass):
              InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
              InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
              InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")])
-
 
         if self.active_item and self.active_item.type == "Entry":
             InlineKeyboardMarkup(message_buttons)
@@ -110,19 +102,20 @@ class KeePass(BaseKeePass):
     def close(self):
         self.kdb.close()
 
-    def open(self,username,password=None,keyfile_path = None):
+    def open(self, username, password=None, keyfile_path=None):
         user = User.get_or_none(username=username)
 
         try:
-            with libkeepass.open(filename=self.path, password=password,keyfile=keyfile_path, unprotect=False) as kdb:
+            with libkeepass.open(filename=self.path, password=password, keyfile=keyfile_path, unprotect=False) as kdb:
                 self.kdb = kdb
                 user.is_opened = True
                 user.save()
                 self._root_obj = kdb.obj_root
+                #print(etree.tounicode(self._root_obj, pretty_print=True))
 
                 self.opened = True
-                self.__init_items()
-                self.uuid = self._root_obj.find('./Root/Group')
+                self.__init_root_group()
+                self.active_item = self.root_group
 
         except IOError:
             raise IOError("Master key or key-file wrong")
@@ -144,7 +137,8 @@ class KeePass(BaseKeePass):
                         continue
                 i += 1
             if i > NUMBER_OF_ENTRIES_ON_PAGE:
-                message_text += "_______Page {0} of {1}_______".format(self.active_item.page, int(math.ceil(self.active_item.size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
+                message_text += "_______Page {0} of {1}_______".format(self.active_item.page, int(
+                    math.ceil(self.active_item.size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
             else:
                 message_text += "_______Page {0} of {1}_______".format(self.active_item.page, 1) + new_line
 
@@ -160,10 +154,10 @@ class KeePass(BaseKeePass):
                         message_text += folder_emo + str(item) + new_line
                 i += 1
             if i > NUMBER_OF_ENTRIES_ON_PAGE:
-                message_text += "_______Page {0} of {1}_______".format(self.active_item.page, int(math.ceil(self.active_item.size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
+                message_text += "_______Page {0} of {1}_______".format(self.active_item.page, int(
+                    math.ceil(self.active_item.size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
             else:
                 message_text += "_______Page {0} of {1}_______".format(self.active_item.page, 1) + new_line
-
 
         message_markup = self.__generate_keyboard()
 
@@ -176,7 +170,7 @@ class KeePass(BaseKeePass):
         finded_items = []
 
         def __inner_find(parent_item):
-            if word.lower() in parent_item.name.lower() :
+            if word.lower() in parent_item.name.lower():
                 finded_items.append(parent_item)
             for item in parent_item.items:
                 if item.type == "Group":
@@ -203,14 +197,12 @@ class KeePass(BaseKeePass):
                 if item.uuid == word:
                     return item
 
-        return __inner_find(self)
+        return __inner_find(self.root_group)
 
-
-
-    def search(self,word):
+    def search(self, word):
         finded_items = self.search_item(word)
 
-        temp_group = KeeGroup(self,self,None,fake=True,items=finded_items)
+        temp_group = KeeGroup(self, self, None, fake=True, items=finded_items)
 
         while self.active_item != self:
             self.active_item.deactivate()
@@ -223,28 +215,48 @@ class KeePass(BaseKeePass):
 
     def end_creating(self):
         if self.create_state:
-            entry = KeeEntry(self.active_item,self.active_item,UUID = (base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), IconID = 0, rawstrings=self.create_state.get_rawstrings())
-            entry_xml = entry.get_xml_element()
+            entry = KeeEntry(self.active_item, self.active_item,
+                             UUID=(base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), IconID=0,
+                             rawstrings=self.create_state.get_rawstrings())
+
             group_item = self.active_item
             while not group_item.type == "Group":
                 group_item = group_item._parent
 
-
+            # rewrite parent group
+            entry_xml = entry.get_xml_element()
             parser = objectify.makeparser()
-            objectify.SubElement(group_item._group_obj, objectify.fromstring(etree.tounicode(entry_xml),parser))
+            entry_obj = objectify.fromstring(etree.tounicode(entry_xml), parser)
+            group_item._group_obj.append(entry_obj)
 
-            print(etree.tounicode(group_item._group_obj, pretty_print=True))
-
+            self.rewrite_root(group_item)
             self.create_state = None
+
+    def rewrite_root(self, group_item):
+
+        # TODO: Rewrite structure with new element
+        group_uuid = group_item.uuid
+        for group in group_item._parent._group_obj.findall('Group'):
+            if group.UUID == group_uuid:
+                del group
+                return
+
+        pass
+
+        self._root_obj.Root.append(self.root_group._group_obj)
+        print(etree.tounicode(self._root_obj, pretty_print=True))
+        self.__init_root_group()
+        self.active_item = self.root_group
+
 
 
 class CreateState():
     def __init__(self):
         self.fields = {"Title": None,
-                  "Username": None,
-                  "Password": None,
-                  "URL": None,
-                  "Notes": None}
+                       "Username": None,
+                       "Password": None,
+                       "URL": None,
+                       "Notes": None}
         self.req_fields = ["Title", "Username", "Password"]
         self.current_field = "Title"
         # Entry or Group
@@ -252,7 +264,7 @@ class CreateState():
 
     def get_rawstrings(self):
         rawstrings = []
-        for key,value in self.fields.items():
+        for key, value in self.fields.items():
             st_elm = objectify.Element("String")
 
             objectify.SubElement(st_elm, "Key")
@@ -270,10 +282,11 @@ class CreateState():
         message_markup = self.__generate_keyboard()
 
         return message_text, message_markup
-    def set_cur_field_value(self,value):
+
+    def set_cur_field_value(self, value):
         self.fields[self.current_field] = value
 
-    def set_cur_field(self,field_name):
+    def set_cur_field(self, field_name):
         self.current_field = field_name
 
     def next_field(self):
@@ -293,6 +306,7 @@ class CreateState():
                 break
 
             prev_field = field
+
     def generate_password(self):
         from random import sample as rsample
 
@@ -313,13 +327,12 @@ class CreateState():
             else:
                 message_text += "      "
 
-
             if field in self.req_fields:
                 message_text += f"<b>{field}</b>: "
             else:
                 message_text += f"{field}: "
 
-            message_text += str(self.fields.get(field,"")) + new_line
+            message_text += str(self.fields.get(field, "")) + new_line
 
         return message_text
 
@@ -334,21 +347,26 @@ class CreateState():
 
         for field in self.fields.keys():
             if field == "Password":
-                message_buttons.append([InlineKeyboardButton(text=field, callback_data=f"create_{field}"),InlineKeyboardButton(text="Generate", callback_data="create_generate_password")])
+                message_buttons.append([InlineKeyboardButton(text=field, callback_data=f"create_{field}"),
+                                        InlineKeyboardButton(text="Generate",
+                                                             callback_data="create_generate_password")])
             else:
                 message_buttons.append([InlineKeyboardButton(text=field, callback_data=f"create_{field}")])
-
 
         message_buttons.append([InlineKeyboardButton(text="---Done---", callback_data="create_done")])
 
         return InlineKeyboardMarkup(message_buttons)
 
+
 class KeeGroup(BaseKeePass):
-    def __init__(self, root, parent,group_obj,fake=False,items=None):
-        super().__init__(root,parent)
+    def __init__(self, root, parent, group_obj, fake=False, items=None, name="Search"):
+        if parent is None:
+            parent = self
+
+        super().__init__(root, parent)
         if fake:
             self.type = "Group"
-            self.name = "Search"
+            self.name = name
             self.uuid = None
             self.notes = None
             self.icon_id = None
@@ -356,6 +374,11 @@ class KeeGroup(BaseKeePass):
             for item in self.items:
                 item._parent = self
                 item._root = root
+
+            # init group object
+            parser = objectify.makeparser()
+            self._group_obj = objectify.fromstring(etree.tounicode(self.get_xml_element()), parser)
+
         else:
             self.type = "Group"
             self._group_obj = group_obj
@@ -372,19 +395,79 @@ class KeeGroup(BaseKeePass):
 
     def __init_entries(self):
         for entry in self._group_obj.findall('Entry'):
-            self.items.append(KeeEntry(self._root,self, entry.UUID.text, entry.IconID.text,entry.findall('String')))
+            self.items.append(KeeEntry(self._root, self, entry.UUID.text, entry.IconID.text, entry.findall('String')))
             self.size += 1
 
     def __init_groups(self):
         for group in self._group_obj.findall('Group'):
-            self.items.append(KeeGroup(self._root,self, group))
+            self.items.append(KeeGroup(self._root, self, group))
             self.size += 1
+
+    def get_xml_element(self):
+        group = Element("Group")
+
+        uuid = SubElement(group, 'UUID')
+        uuid.text = self.uuid
+
+        name = SubElement(group, 'Name')
+        name.text = self.name
+
+        notes = SubElement(group, 'Notes')
+        notes.text = ""
+
+        iconID = SubElement(group, 'IconID')
+        iconID.text = str(self.icon_id)
+
+        # ------Times
+        times = SubElement(group, "Times")
+
+        nowdate = datetime.datetime.now()
+
+        cr_time = SubElement(times, "CreationTime")
+        cr_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        lm_time = SubElement(times, "LastModificationTime")
+        lm_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        la_time = SubElement(times, "LastAccessTime")
+        la_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        et_time = SubElement(times, "ExpiryTime")
+        et_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        expires = SubElement(times, "Expires")
+        expires.text = "False"
+
+        usage_count = SubElement(times, "UsageCount")
+        usage_count.text = "0"
+
+        lch_time = SubElement(times, "LocationChanged")
+        lch_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Times-------------------
+
+        is_expanded = SubElement(group, "IsExpanded")
+        is_expanded.text = 'True'
+
+        # Autotype -----------
+        default_autotype_seq = SubElement(group, "DefaultAutoTypeSequence")
+        default_autotype_seq.text = ''
+        enable_at = SubElement(group, "EnableAutoType")
+        enable_at.text = "null"
+
+        # Searching -----------
+        enable_searching = SubElement(group, "EnableSearching")
+        enable_at.text = "null"
+
+        last_top_vis_entry = SubElement(group, "LastTopVisibleEntry")
+        last_top_vis_entry.text = "AAAAAAAAAAAAAAAAAAAAAA=="
+
+        return group
 
 
 class KeeEntry(BaseKeePass):
 
-    def __init__(self, root,parent, UUID, IconID,rawstrings):
-        super().__init__(root,parent)
+    def __init__(self, root, parent, UUID, IconID, rawstrings):
+        super().__init__(root, parent)
         self.type = "Entry"
         self.uuid = UUID
         self.icon_id = int(IconID)
@@ -396,9 +479,9 @@ class KeeEntry(BaseKeePass):
     def __str__(self):
         return self.name
 
-    def __init_strings(self,rawstrings):
+    def __init_strings(self, rawstrings):
         for rawstring in rawstrings:
-            self.strings.append(EntryString(rawstring.Key.text,rawstring.Value.text))
+            self.strings.append(EntryString(rawstring.Key.text, rawstring.Value.text))
             self.size += 1
 
     def __set_name(self):
@@ -429,38 +512,38 @@ class KeeEntry(BaseKeePass):
         uuid = SubElement(entry, 'UUID')
         uuid.text = self.uuid
 
-        iconID = SubElement(entry,'IconID')
+        iconID = SubElement(entry, 'IconID')
         iconID.text = str(self.icon_id)
 
-        SubElement(entry,"ForegroundColor")
-        SubElement(entry,"BackgroundColor")
-        SubElement(entry,"OverrideURL")
-        SubElement(entry,"Tags")
+        SubElement(entry, "ForegroundColor")
+        SubElement(entry, "BackgroundColor")
+        SubElement(entry, "OverrideURL")
+        SubElement(entry, "Tags")
 
         # ------Times
-        times = SubElement(entry,"Times")
+        times = SubElement(entry, "Times")
 
         nowdate = datetime.datetime.now()
 
-        cr_time = SubElement(times,"CreationTime")
+        cr_time = SubElement(times, "CreationTime")
         cr_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        lm_time = SubElement(times,"LastModificationTime")
+        lm_time = SubElement(times, "LastModificationTime")
         lm_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        la_time = SubElement(times,"LastAccessTime")
+        la_time = SubElement(times, "LastAccessTime")
         la_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        et_time = SubElement(times,"ExpiryTime")
+        et_time = SubElement(times, "ExpiryTime")
         et_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        expires = SubElement(times,"Expires")
+        expires = SubElement(times, "Expires")
         expires.text = "False"
 
-        usage_count = SubElement(times,"UsageCount")
+        usage_count = SubElement(times, "UsageCount")
         usage_count.text = "0"
 
-        lch_time = SubElement(times,"LocationChanged")
+        lch_time = SubElement(times, "LocationChanged")
         lch_time.text = nowdate.strftime("%Y-%m-%dT%H:%M:%SZ")
         # Times-------------------
 
@@ -469,25 +552,25 @@ class KeeEntry(BaseKeePass):
             entry.append(string.get_xml_element())
 
         # Autotype -----------
-        autotype = SubElement(entry,"AutoType")
-        at_enabled = SubElement(autotype,"Enabled")
+        autotype = SubElement(entry, "AutoType")
+        at_enabled = SubElement(autotype, "Enabled")
         at_enabled.text = "True"
 
-        at_data_transfer_obfuscation = SubElement(autotype,"DataTransferObfuscation")
+        at_data_transfer_obfuscation = SubElement(autotype, "DataTransferObfuscation")
         at_data_transfer_obfuscation.text = "0"
 
-        history = SubElement(entry,"History")
+        history = SubElement(entry, "History")
 
         return entry
 
+
 class EntryString():
-    def __init__(self, key,value=None):
+    def __init__(self, key, value=None):
         self.key = key
         self.value = value
 
     def get_xml_element(self):
         string = Element('String')
-
 
         key = SubElement(string, 'Key')
         key.text = self.key
@@ -496,7 +579,6 @@ class EntryString():
         value.text = self.value
 
         return string
-
 
     def __str__(self):
         return self.key + " = " + self.value

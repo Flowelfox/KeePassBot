@@ -265,7 +265,7 @@ def create(bot,update):
         print(e)
 
     bot.send_message(chat_id=update.message.chat_id,
-                     text="Click on the field name to set the value for it.\nSend the text to set the value.\nBold fields are required.\nYou can use the arrows to switch between fields.")
+                     text="Click on the field name to set the value for it.\nSend the text to set the value.\nBold fields are required.\nYou can use the arrows buttons to switch between fields.")
 
 #create querys handler
 def create_query(bot,update):
@@ -282,9 +282,17 @@ def create_query(bot,update):
                 return
 
 
+
+        keepass.end_creating()
         user.create_state = False
         user.save()
-        keepass.end_creating()
+        bot.send_message(chat_id=update.callback_query.message.chat_id,
+                         text="Entry created")
+        message_text, message_markup = keepass.get_message()
+        bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
+                              message_id=user.interface_message_id,
+                              text=message_text,
+                              reply_markup=message_markup)
         bot.answer_callback_query(update.callback_query.id)
         return
 
@@ -397,7 +405,7 @@ not_exists_handler = MessageHandler(~ CustomFilters.user_exists,start)
 #user exists
 #not document
 #db not exist
-database_not_exist_handler = MessageHandler(CustomFilters.user_exists & ~ Filters.document & ~ CustomFilters.password_database_exist, database_not_exist)
+database_not_exist_handler   = MessageHandler(CustomFilters.user_exists & ~ Filters.document & ~ CustomFilters.password_database_exist, database_not_exist)
 
 #user exists
 #maybe document
@@ -443,6 +451,7 @@ unknown_handler = MessageHandler(Filters.all, unknown)
 
 dispatcher.add_handler(stop_handler)
 dispatcher.add_handler(start_handler)
+dispatcher.add_handler(close_handler)
 dispatcher.add_handler(delete_handler)
 dispatcher.add_handler(not_exists_handler)
 dispatcher.add_handler(database_not_exist_handler)
@@ -453,7 +462,6 @@ dispatcher.add_handler(message_in_create_handler)
 dispatcher.add_handler(search_handler)
 dispatcher.add_handler(create_query_handler)
 dispatcher.add_handler(show_group_handler)
-dispatcher.add_handler(close_handler)
 dispatcher.add_handler(unknown_handler)
 
 
