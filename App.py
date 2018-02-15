@@ -281,25 +281,26 @@ def create_query(bot,update):
                 bot.answer_callback_query(update.callback_query.id)
                 return
 
-
-
-        keepass.end_creating()
-        user.create_state = False
-        user.save()
-        bot.send_message(chat_id=update.callback_query.message.chat_id,
-                         text="Entry created")
-        message_text, message_markup = keepass.get_message()
-        bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
-                              message_id=user.interface_message_id,
-                              text=message_text,
-                              reply_markup=message_markup)
+        if keepass.end_creating(user):
+            user.create_state = False
+            user.save()
+            message_text, message_markup = keepass.get_message()
+            bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
+                                  message_id=user.interface_message_id,
+                                  text=message_text,
+                                  reply_markup=message_markup)
+            bot.send_message(chat_id=update.callback_query.message.chat_id,
+                             text="Entry created")
+        else:
+            bot.send_message(chat_id=update.callback_query.message.chat_id,
+                             text="Some error")
         bot.answer_callback_query(update.callback_query.id)
         return
 
     elif data == "Back":
         user.create_state = False
         user.save()
-        keepass.end_creating()
+        keepass.end_creating(user)
 
         message_text, message_markup = keepass.get_message()
         bot.edit_message_text(chat_id=update.callback_query.message.chat_id,

@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from pprint import pprint
 
 import lxml
+import os
 from lxml.etree import Element, SubElement
 from lxml import etree
 from lxml import objectify
@@ -50,6 +51,12 @@ class BaseKeePass(ABC):
         self._root.active_item = self._parent
         self.is_active = False
 
+    def get_root(self):
+        return self._root
+
+    def get_parent(self):
+        return self._parent
+
 
 class KeePass:
     def __init__(self, path):
@@ -60,7 +67,6 @@ class KeePass:
         self.opened = False
         self.create_state = None
         self.root_group = None
-
 
     def __str__(self):
         if not self.opened:
@@ -73,7 +79,6 @@ class KeePass:
             raise IOError("Databse not opened")
 
         root_group = self._root_obj.find('./Root/Group')
-        pass
         self.root_group = KeeGroup(self, None, root_group)
 
     def __generate_keyboard(self):
@@ -111,7 +116,7 @@ class KeePass:
                 user.is_opened = True
                 user.save()
                 self._root_obj = kdb.obj_root
-                #print(etree.tounicode(self._root_obj, pretty_print=True))
+                # print(etree.tounicode(self._root_obj, pretty_print=True))
 
                 self.opened = True
                 self.__init_root_group()
@@ -213,41 +218,42 @@ class KeePass:
         self.create_state = CreateState()
         return self.create_state.get_message()
 
-    def end_creating(self):
+    def end_creating(self, user):
         if self.create_state:
-            entry = KeeEntry(self.active_item, self.active_item,
-                             UUID=(base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), IconID=0,
-                             rawstrings=self.create_state.get_rawstrings())
 
             group_item = self.active_item
             while not group_item.type == "Group":
-                group_item = group_item._parent
+                group_item = group_item.get_parent()
 
-            # rewrite parent group
+            entry = KeeEntry(group_item.get_root(), group_item,
+                             UUID=(base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), IconID=0,
+                             rawstrings=self.create_state.get_rawstrings())
+
             entry_xml = entry.get_xml_element()
             parser = objectify.makeparser()
             entry_obj = objectify.fromstring(etree.tounicode(entry_xml), parser)
-            group_item._group_obj.append(entry_obj)
 
-            self.rewrite_root(group_item)
+            group_item.get_group_obj().append(entry_obj)
+            group_item.refresh_items()
+
+            if user is None:
+                self.create_state = None
+                return False
+
+            """Write to new file"""
+            with open(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx', 'wb') as output:
+                self.kdb.write_to(output)
+
+            """Saving to database"""
+            with open(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx', 'rb+') as file:
+                user.file = file.read()
+                user.save()
+
+            """Removing downloaded file"""
+            os.remove(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx')
+
             self.create_state = None
-
-    def rewrite_root(self, group_item):
-
-        # TODO: Rewrite structure with new element
-        group_uuid = group_item.uuid
-        for group in group_item._parent._group_obj.findall('Group'):
-            if group.UUID == group_uuid:
-                del group
-                return
-
-        pass
-
-        self._root_obj.Root.append(self.root_group._group_obj)
-        print(etree.tounicode(self._root_obj, pretty_print=True))
-        self.__init_root_group()
-        self.active_item = self.root_group
-
+            return True
 
 
 class CreateState():
@@ -393,6 +399,11 @@ class KeeGroup(BaseKeePass):
     def __str__(self):
         return self.name
 
+    def refresh_items(self):
+        self.items = []
+        self.__init_entries()
+        self.__init_groups()
+
     def __init_entries(self):
         for entry in self._group_obj.findall('Entry'):
             self.items.append(KeeEntry(self._root, self, entry.UUID.text, entry.IconID.text, entry.findall('String')))
@@ -462,6 +473,9 @@ class KeeGroup(BaseKeePass):
         last_top_vis_entry.text = "AAAAAAAAAAAAAAAAAAAAAA=="
 
         return group
+
+    def get_group_obj(self):
+        return self._group_obj
 
 
 class KeeEntry(BaseKeePass):
