@@ -4,6 +4,10 @@ DATABASE = "database.sqlite"
 BOT_TOKEN = ""
 TEMP_FOLDER = 'temp'
 NUMBER_OF_ENTRIES_ON_PAGE = 10
+ADMINISTRATOR = None
+DISTRIBUTION_COMMAND = None
+DISTRIBUTION_STOP_COMMAND = None
+DISTRIBUTION_DELAY = 60
 plus_emo = emojize(":heavy_plus_sign:", use_aliases=True)
 minus_emo = emojize(":heavy_minus_sign:", use_aliases=True)
 key_emo = emojize(":key:", use_aliases=True)

@@ -1,23 +1,20 @@
 import datetime
-import libkeepass
+import logging
 import os
 
-import math
 import telegram
-from emoji import emojize
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, BaseFilter, CallbackQueryHandler, run_async, \
-    JobQueue
-import logging
-import xml.dom.minidom as minidom
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 
+import CustomFilters
 from KeePass import KeePass
 from Models import User
-import CustomFilters
 from settings import *
 
 bot = telegram.Bot(token=BOT_TOKEN)
 updater = Updater(token=BOT_TOKEN)
+j = updater.job_queue
+distribution_text = ""
 dispatcher = updater.dispatcher
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -38,6 +35,7 @@ def set_chat_id(function):
                 user.chat_id = update.message.chat_id
                 user.save()
         function(*args, **kwargs)
+
     return wrapper
 
 
@@ -46,7 +44,8 @@ def start(bot, update):
     user = User.get_or_none(username=update.message.from_user.name)
     print(user)
     if not user:
-        user = User(username=update.message.from_user.name, join_date=datetime.datetime.now(), chat_id=update.message.chat_id)
+        user = User(username=update.message.from_user.name, join_date=datetime.datetime.now(),
+                    chat_id=update.message.chat_id)
         user.save()
         bot.send_message(chat_id=update.message.chat_id, text="Hi %s, now you registered." % user.username)
         bot.send_message(chat_id=update.message.chat_id,
@@ -67,6 +66,7 @@ def stop(bot, update):
     else:
         bot.send_message(chat_id=update.message.chat_id,
                          text="Sorry, i don't know who you are, please send me \"/start\"")
+
 
 def search(bot, update):
     user = User.get_or_none(username=update.message.from_user.name)
@@ -176,6 +176,7 @@ def not_opened(bot, update):
             bot.send_message(chat_id=update.message.chat_id, text="Send me password to open database")
         elif not user.password_needed and user.key_file_needed:
             bot.send_message(chat_id=update.message.chat_id, text="Send me key-file to open database")
+
 
 def show_group(bot, update):
     data = update.callback_query.data
@@ -327,7 +328,7 @@ def create(bot, update):
 
     if user.notification:
         bot.send_message(chat_id=update.message.chat_id,
-                     text="Click on the field name to set the value for it.\nSend the text to set the value.\nBold fields are required.\nYou can use the arrows buttons to switch between fields.")
+                         text="Click on the field name to set the value for it.\nSend the text to set the value.\nBold fields are required.\nYou can use the arrows buttons to switch between fields.")
 
 
 # create querys handler
@@ -423,6 +424,7 @@ def message_in_create(bot, update):
     except Exception as e:
         print(e)
 
+
 @set_chat_id
 def close(bot, update):
     username = update.message.from_user.name
@@ -475,6 +477,7 @@ def toogle_notifications(bot, update):
     else:
         bot.send_message(chat_id=update.message.chat_id, text="Notifications disabled.")
 
+
 def resend_interface(bot, update):
     user = User.get_or_none(username=update.message.from_user.name)
     keepass = opened_databases[update.message.from_user.name]
@@ -502,21 +505,50 @@ def get_database(bot, update):
         output.write(user.file)
 
     """Send to user"""
-    bot.send_document(chat_id=update.message.chat_id, document=open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'rb'))
+    bot.send_document(chat_id=update.message.chat_id,
+                      document=open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'rb'))
 
     """Removing downloaded file"""
     os.remove(TEMP_FOLDER + '/' + str(user.username) + '.kdbx')
     bot.send_message(chat_id=update.message.chat_id,
                      text=exm_mark_emo * 2 + "PLEASE REMOVE DATABASE FILE FROM HISTORY" + exm_mark_emo * 2)
 
+
+@set_chat_id
 def unknown(bot, update):
     bot.send_message(chat_id=update.message.chat_id, text="Sorry, I didn't understand that command.")
+
+
+def stop_distribution(bot, update):
+    if update.message.from_user.name != ADMINISTRATOR:
+        bot.send_message(chat_id=update.message.chat_id, text="Sorry, only administrator can use this command")
+        return
+    j.stop()
+    bot.send_message(chat_id=update.message.chat_id, text="Distribution job stopped.")
+
+
+def distribution_cmd(bot, update):
+    if update.message.from_user.name != ADMINISTRATOR:
+        bot.send_message(chat_id=update.message.chat_id, text="Sorry, only administrator can use this command")
+        return
+    global distribution_text
+    distribution_text = update.message.text.replace('/' + DISTRIBUTION_COMMAND + ' ', "")
+    j.run_once(distribution, DISTRIBUTION_DELAY)
+
+
+def distribution(bot, job):
+    for usr in User.select().where(User.file != ""):
+        if usr.chat_id != 0:
+            bot.send_message(chat_id=usr.chat_id, text=distribution_text.replace('<br/>', '\n'))
 
 
 delete_handler = CommandHandler('delete', delete_database, filters=CustomFilters.password_database_exist)
 
 start_handler = CommandHandler('start', start)
 stop_handler = CommandHandler('stop', stop)
+
+distribution_handler = CommandHandler(DISTRIBUTION_COMMAND, distribution_cmd)
+stop_distribution_handler = CommandHandler(DISTRIBUTION_STOP_COMMAND, stop_distribution)
 
 # user not exists
 not_exists_handler = MessageHandler(~ CustomFilters.user_exists, start)
@@ -566,12 +598,12 @@ search_handler = CommandHandler("search", search,
 # db exist
 # opened
 resend_interface_handler = CommandHandler("resend", resend_interface,
-                                filters=CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened)
+                                          filters=CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened)
 
 # user exists
 # db exist
 get_database_handler = CommandHandler("download", get_database,
-                                filters=CustomFilters.user_exists & CustomFilters.password_database_exist)
+                                      filters=CustomFilters.user_exists & CustomFilters.password_database_exist)
 
 create_query_handler = CallbackQueryHandler(create_query, pattern=r"create_.*")
 
@@ -588,6 +620,8 @@ unknown_handler = MessageHandler(Filters.all, unknown)
 
 dispatcher.add_handler(stop_handler)
 dispatcher.add_handler(start_handler)
+dispatcher.add_handler(distribution_handler)
+dispatcher.add_handler(stop_distribution_handler)
 dispatcher.add_handler(toogle_notifications_handler)
 dispatcher.add_handler(close_handler)
 dispatcher.add_handler(delete_handler)
@@ -614,7 +648,9 @@ users = User.select().where(User.is_opened == True)
 for userr in users:
     try:
         opened_databases[userr.username].close()
-        close_proces(userr.username, userr.chat_id)
+        if userr.chat_id != 0:
+            bot.send_message(chat_id=userr.chat_id, text="Bot restarting...")
+            close_proces(userr.username, userr.chat_id)
     except KeyError as e:
         logging.error("Key error: " + str(e))
 
