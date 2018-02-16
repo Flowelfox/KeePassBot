@@ -22,6 +22,7 @@ class User(BaseModel):
     key_file_needed = BooleanField(default=False)
     password_needed = BooleanField(default=True)
     create_state = BooleanField(default=False)
+    notification = BooleanField(default=True)
 
     class Meta:
         order_by = ('username',)
@@ -42,10 +43,11 @@ def create_tables():
 def create_custom_columns():
     database.connect()
     migrator = SqliteMigrator(database)
-    create_state = BooleanField(default=False)
+
+    new_column = BooleanField(default=True)
 
     migrate(
-        migrator.add_column('user', 'create_state', create_state),
+        migrator.add_column('user', 'notification', new_column),
     )
 
 if __name__ == "__main__":

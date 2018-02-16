@@ -25,8 +25,6 @@ class BaseKeePass(ABC):
         self._parent = parent
         self.page = 1
         self.size = 0
-        self.is_active = False
-        self.active_item = None
         self.type = None
 
     def next_page(self):
@@ -44,12 +42,10 @@ class BaseKeePass(ABC):
             self.page = int(math.ceil(self.size / NUMBER_OF_ENTRIES_ON_PAGE))
 
     def activate(self):
-        self._root.active_item = self
-        self.is_active = True
+        KeePass.active_item = self
 
     def deactivate(self):
-        self._root.active_item = self._parent
-        self.is_active = False
+        KeePass.active_item = self._parent
 
     def get_root(self):
         return self._root
@@ -62,21 +58,29 @@ class BaseKeePass(ABC):
 
 
 class KeePass:
+    active_item = None
+
     def __init__(self, path):
         self.name = "KeePassManager"
         self.type = "Manager"
-        self.active_item = None
         self.path = path
         self.opened = False
         self.create_state = None
         self.root_group = None
-        self.user = None
+        self.username = None
 
     def __str__(self):
         if not self.opened:
             raise IOError("Databse not opened")
 
         return str(self.root_group)
+
+    @staticmethod
+    def get_active_item():
+        return KeePass.active_item
+
+    def get_user(self):
+        return User.get_or_none(username=self.username)
 
     def __init_root_group(self):
         if not self.opened:
@@ -97,13 +101,17 @@ class KeePass:
              InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
              InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")])
 
-        if self.active_item and self.active_item.type == "Entry":
-            message_buttons.append([InlineKeyboardButton(text=x_emo, callback_data="Delete")])
+        if KeePass.get_active_item() and KeePass.get_active_item().type == "Entry":
+            if getattr(KeePass.get_active_item(), 'really_delete', False):
+                message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
+                                        InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
+            else:
+                message_buttons.append([InlineKeyboardButton(text=x_emo + "Delete" + x_emo, callback_data="Delete")])
             InlineKeyboardMarkup(message_buttons)
         else:
             i = 0
-            for item in self.active_item.items:
-                if self.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= self.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
+            for item in KeePass.get_active_item().items:
+                if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
                     message_buttons.append([InlineKeyboardButton(text=item.name, callback_data=item.uuid)])
                 i += 1
 
@@ -113,8 +121,8 @@ class KeePass:
         self.kdb.close()
 
     def open(self, username, password=None, keyfile_path=None):
-        user = User.get_or_none(username=username)
-        self.user = user
+        self.username = username
+        user = self.get_user()
 
         try:
             with libkeepass.open(filename=self.path, password=password, keyfile=keyfile_path, unprotect=False) as kdb:
@@ -126,7 +134,7 @@ class KeePass:
 
                 self.opened = True
                 self.__init_root_group()
-                self.active_item = self.root_group
+                self.root_group.activate()
 
         except IOError:
             raise IOError("Master key or key-file wrong")
@@ -137,38 +145,38 @@ class KeePass:
 
         message_text = ""
 
-        if self.active_item.type == "Entry":
-            message_text += "_______" + key_emo + self.active_item.name + "_______" + new_line
+        if KeePass.get_active_item().type == "Entry":
+            message_text += "_______" + key_emo + KeePass.get_active_item().name + "_______" + new_line
             i = 0
-            for string in self.active_item.strings:
-                if self.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= self.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
+            for string in KeePass.get_active_item().strings:
+                if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
                     try:
                         message_text += str(string) + new_line
                     except TypeError:
                         continue
                 i += 1
             if i > NUMBER_OF_ENTRIES_ON_PAGE:
-                message_text += "_______Page {0} of {1}_______".format(self.active_item.page, int(
-                    math.ceil(self.active_item.size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
+                message_text += "_______Page {0} of {1}_______".format(KeePass.get_active_item().page, int(
+                    math.ceil(KeePass.get_active_item().size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
             else:
-                message_text += "_______Page {0} of {1}_______".format(self.active_item.page, 1) + new_line
+                message_text += "_______Page {0} of {1}_______".format(KeePass.get_active_item().page, 1) + new_line
 
-        if self.active_item.type == "Group":
+        if KeePass.get_active_item().type == "Group":
 
-            message_text += "_______" + self.active_item.name + "_______" + new_line
+            message_text += "_______" + KeePass.get_active_item().name + "_______" + new_line
             i = 0
-            for item in self.active_item.items:
-                if self.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= self.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
+            for item in KeePass.get_active_item().items:
+                if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
                     if item.type == "Entry":
                         message_text += key_emo + str(item) + new_line
                     if item.type == "Group":
                         message_text += folder_emo + str(item) + new_line
                 i += 1
             if i > NUMBER_OF_ENTRIES_ON_PAGE:
-                message_text += "_______Page {0} of {1}_______".format(self.active_item.page, int(
-                    math.ceil(self.active_item.size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
+                message_text += "_______Page {0} of {1}_______".format(KeePass.get_active_item().page, int(
+                    math.ceil(KeePass.get_active_item().size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
             else:
-                message_text += "_______Page {0} of {1}_______".format(self.active_item.page, 1) + new_line
+                message_text += "_______Page {0} of {1}_______".format(KeePass.get_active_item().page, 1) + new_line
 
         message_markup = self.__generate_keyboard()
 
@@ -215,8 +223,8 @@ class KeePass:
 
         temp_group = KeeGroup(self, self, None, fake=True, items=finded_items)
 
-        while self.active_item != self:
-            self.active_item.deactivate()
+        while KeePass.get_active_item() != self:
+            KeePass.get_active_item().deactivate()
 
         temp_group.activate()
 
@@ -227,38 +235,37 @@ class KeePass:
     def end_creating(self):
         if self.create_state:
 
-            group_item = self.active_item
+            group_item = KeePass.get_active_item()
             while not group_item.type == "Group":
                 group_item = group_item.get_parent()
 
             entry_obj = KeeEntry.get_xml_element(uuid=(base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), icon_id=0,
                                                  strings=self.create_state.get_rawstrings())
 
-            parser = objectify.makeparser()
-            entry_obj = objectify.fromstring(etree.tounicode(entry_obj), parser)
-
-            group_item.get_group_obj().append(entry_obj)
-            group_item.refresh_items()
+            group_item.append(entry_obj)
+            group_item.activate()
 
             self.update_kdb_in_db()
             self.create_state = None
 
     def update_kdb_in_db(self):
+        self.kdb.object_root = self._root_obj
+        user = self.get_user()
 
         """Write to new file"""
-        with open(TEMP_FOLDER + '/' + str(self.user.id) + str(self.user.username) + '.kdbx', 'wb') as output:
+        with open(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx', 'wb') as output:
             self.kdb.write_to(output)
 
         """Saving to database"""
-        with open(TEMP_FOLDER + '/' + str(self.user.id) + str(self.user.username) + '.kdbx', 'rb+') as file:
-            self.user.file = file.read()
-            self.user.save()
+        with open(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx', 'rb+') as file:
+            user.file = file.read()
+            user.save()
 
         """Removing downloaded file"""
-        os.remove(TEMP_FOLDER + '/' + str(self.user.id) + str(self.user.username) + '.kdbx')
+        os.remove(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx')
 
 
-class CreateState():
+class CreateState:
     def __init__(self):
         self.fields = {"Title": None,
                        "Username": None,
@@ -392,6 +399,13 @@ class KeeGroup(BaseKeePass):
 
     def __str__(self):
         return self.name
+
+    def append(self,entry_obj):
+        parser = objectify.makeparser()
+        entry_obj = objectify.fromstring(etree.tounicode(entry_obj), parser)
+
+        self.get_group_obj().append(entry_obj)
+        self.refresh_items()
 
     def refresh_items(self):
         self.items = []
@@ -563,10 +577,9 @@ class KeeEntry(BaseKeePass):
         return entry
 
     def delete(self):
-        # TODO: Implement deletion
         self.deactivate()
-        del self._entry_obj
-        self.active_item.refresh_items()
+        self._entry_obj.getparent().remove(self._entry_obj)
+        KeePass.get_active_item().refresh_items()
         self._root.update_kdb_in_db()
 
 
