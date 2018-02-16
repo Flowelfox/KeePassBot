@@ -608,7 +608,7 @@ updater.start_polling(poll_interval=0.5)
 updater.idle()
 
 """Stoping bot and closing all databases"""
-print("Stoping bot...")
+logging.info("Stoping bot...")
 
 users = User.select().where(User.is_opened == True)
 for userr in users:
