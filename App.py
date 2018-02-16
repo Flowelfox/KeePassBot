@@ -342,11 +342,13 @@ def create_query(bot, update):
                                  text="Please fill required fields")
                 bot.answer_callback_query(update.callback_query.id)
                 return
+
+        keepass.end_creating()
+
         user = User.get_or_none(username=update.callback_query.from_user.name)
         user.create_state = False
         user.save()
 
-        keepass.end_creating()
         message_text, message_markup = keepass.get_message()
         bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
                               message_id=user.interface_message_id,
@@ -602,7 +604,7 @@ dispatcher.add_handler(create_query_handler)
 dispatcher.add_handler(show_group_handler)
 dispatcher.add_handler(unknown_handler)
 
-updater.start_polling(poll_interval=1.0)
+updater.start_polling(poll_interval=0.5)
 updater.idle()
 
 """Stoping bot and closing all databases"""
