@@ -28,12 +28,25 @@ def chunks(l, n):
         yield l[i:i + n]
 
 
+def set_chat_id(function):
+    def wrapper(*args, **kwargs):
+        update = args[1]
+
+        if not update.message.from_user.name.endswith('bot'):
+            user = User.get_or_none(username=update.message.from_user.name)
+            if user.chat_id == 0:
+                user.chat_id = update.message.chat_id
+                user.save()
+        function(*args, **kwargs)
+    return wrapper
+
+
 # FUNCTIONS
 def start(bot, update):
     user = User.get_or_none(username=update.message.from_user.name)
     print(user)
     if not user:
-        user = User(username=update.message.from_user.name, join_date=datetime.datetime.now())
+        user = User(username=update.message.from_user.name, join_date=datetime.datetime.now(), chat_id=update.message.chat_id)
         user.save()
         bot.send_message(chat_id=update.message.chat_id, text="Hi %s, now you registered." % user.username)
         bot.send_message(chat_id=update.message.chat_id,
@@ -54,7 +67,6 @@ def stop(bot, update):
     else:
         bot.send_message(chat_id=update.message.chat_id,
                          text="Sorry, i don't know who you are, please send me \"/start\"")
-
 
 def search(bot, update):
     user = User.get_or_none(username=update.message.from_user.name)
@@ -165,7 +177,6 @@ def not_opened(bot, update):
         elif not user.password_needed and user.key_file_needed:
             bot.send_message(chat_id=update.message.chat_id, text="Send me key-file to open database")
 
-
 def show_group(bot, update):
     data = update.callback_query.data
     user = User.get_or_none(username=update.callback_query.from_user.name)
@@ -193,6 +204,9 @@ def show_group(bot, update):
             user.password_needed = True
         user.save()
         bot.answer_callback_query(update.callback_query.id)
+
+        bot.send_message(chat_id=update.callback_query.message.chat_id,
+                         text=exm_mark_emo * 2 + "PLEASE REMOVE DATABASE FILE FROM HISTORY" + exm_mark_emo * 2)
 
         if user.password_needed and user.key_file_needed:
             bot.send_message(chat_id=update.callback_query.message.chat_id,
@@ -286,12 +300,21 @@ def show_group(bot, update):
 
 # create item function
 def create(bot, update):
+    args = update.message.text.replace('/create ', '')
+
     keepass = opened_databases[update.message.from_user.name]
+    if args.lower() in "group":
+        message_text, message_markup = keepass.create_new("Group")
+    elif args.lower() in "entry":
+        message_text, message_markup = keepass.create_new("Entry")
+    else:
+        bot.send_message(chat_id=update.message.chat_id,
+                         text="Wrong arguments, choices are: 'Entry', 'Group', 'e', 'g'\nExample: /create Group")
+        return
     # Entering in create state
     user = User.get_or_none(username=update.message.from_user.name)
     user.create_state = True
     user.save()
-    message_text, message_markup = keepass.create_new_item()
 
     try:
         bot.edit_message_text(chat_id=update.message.chat_id,
@@ -330,7 +353,7 @@ def create_query(bot, update):
                               text=message_text,
                               reply_markup=message_markup)
         bot.send_message(chat_id=update.callback_query.message.chat_id,
-                         text="Entry created")
+                         text="Item created")
         bot.answer_callback_query(update.callback_query.id)
         return
 
@@ -379,6 +402,12 @@ def message_in_create(bot, update):
     user = User.get_or_none(username=update.message.from_user.name)
     keepass = opened_databases[update.message.from_user.name]
 
+    # length check
+    if len(update.message.text) > 40:
+        bot.send_message(chat_id=update.message.chat_id,
+                         text="New value too long. Please send text bellow 40 chars")
+        return
+
     keepass.create_state.set_cur_field_value(update.message.text)
     keepass.create_state.next_field()
     message_text, message_markup = keepass.create_state.get_message()
@@ -392,7 +421,7 @@ def message_in_create(bot, update):
     except Exception as e:
         print(e)
 
-
+@set_chat_id
 def close(bot, update):
     username = update.message.from_user.name
     chat_id = update.message.chat_id
@@ -463,6 +492,21 @@ def resend_interface(bot, update):
     user.interface_message_id = interface_message.message_id
     user.save()
 
+
+def get_database(bot, update):
+    user = User.get_or_none(username=update.message.from_user.name)
+    """Write to new file"""
+    with open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'wb') as output:
+        output.write(user.file)
+
+    """Send to user"""
+    bot.send_document(chat_id=update.message.chat_id, document=open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'rb'))
+
+    """Removing downloaded file"""
+    os.remove(TEMP_FOLDER + '/' + str(user.username) + '.kdbx')
+    bot.send_message(chat_id=update.message.chat_id,
+                     text=exm_mark_emo * 2 + "PLEASE REMOVE DATABASE FILE FROM HISTORY" + exm_mark_emo * 2)
+
 def unknown(bot, update):
     bot.send_message(chat_id=update.message.chat_id, text="Sorry, I didn't understand that command.")
 
@@ -506,24 +550,26 @@ message_in_create_handler = MessageHandler(
     message_in_create)
 
 # user exists
-# not document
 # db exist
 # opened
 create_item_handler = CommandHandler("create", create,
                                      filters=CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened)
 
 # user exists
-# not document
 # db exist
 # opened
 search_handler = CommandHandler("search", search,
-                                filters=CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened)# user exists
+                                filters=CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened)
 # user exists
-# not document
 # db exist
 # opened
 resend_interface_handler = CommandHandler("resend", resend_interface,
                                 filters=CustomFilters.user_exists & CustomFilters.password_database_exist & CustomFilters.is_database_opened)
+
+# user exists
+# db exist
+get_database_handler = CommandHandler("download", get_database,
+                                filters=CustomFilters.user_exists & CustomFilters.password_database_exist)
 
 create_query_handler = CallbackQueryHandler(create_query, pattern=r"create_.*")
 
@@ -551,6 +597,7 @@ dispatcher.add_handler(create_item_handler)
 dispatcher.add_handler(message_in_create_handler)
 dispatcher.add_handler(search_handler)
 dispatcher.add_handler(resend_interface_handler)
+dispatcher.add_handler(get_database_handler)
 dispatcher.add_handler(create_query_handler)
 dispatcher.add_handler(show_group_handler)
 dispatcher.add_handler(unknown_handler)
@@ -565,6 +612,7 @@ users = User.select().where(User.is_opened == True)
 for userr in users:
     try:
         opened_databases[userr.username].close()
+        close_proces(userr.username, userr.chat_id)
     except KeyError as e:
         logging.error("Key error: " + str(e))
 

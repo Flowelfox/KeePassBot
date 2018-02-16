@@ -1,5 +1,5 @@
 import base64
-import uuid
+import uuid as uuidGenerator
 from abc import ABC, abstractmethod
 from pprint import pprint
 
@@ -110,9 +110,16 @@ class KeePass:
             InlineKeyboardMarkup(message_buttons)
         else:
             i = 0
+            if KeePass.get_active_item() != self.root_group:
+                if getattr(KeePass.get_active_item(), 'really_delete', False):
+                    message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
+                                            InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
+                else:
+                    message_buttons.append([InlineKeyboardButton(text=x_emo + "Delete current group" + x_emo, callback_data="Delete")])
+
             for item in KeePass.get_active_item().items:
                 if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
-                    message_buttons.append([InlineKeyboardButton(text=item.name, callback_data=item.uuid)])
+                    message_buttons.append([InlineKeyboardButton(text=str(item), callback_data=item.uuid)])
                 i += 1
 
         return InlineKeyboardMarkup(message_buttons)
@@ -163,7 +170,7 @@ class KeePass:
 
         if KeePass.get_active_item().type == "Group":
 
-            message_text += "_______" + KeePass.get_active_item().name + "_______" + new_line
+            message_text += "_______" + str(KeePass.get_active_item()) + "_______" + new_line
             i = 0
             for item in KeePass.get_active_item().items:
                 if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
@@ -228,54 +235,74 @@ class KeePass:
 
         temp_group.activate()
 
-    def create_new_item(self):
-        self.create_state = CreateState()
+    def create_new(self, type):
+        self.create_state = CreateState(type)
         return self.create_state.get_message()
 
     def end_creating(self):
-        if self.create_state:
+        if self.create_state and self.get_user().create_state:
 
             group_item = KeePass.get_active_item()
             while not group_item.type == "Group":
                 group_item = group_item.get_parent()
 
-            entry_obj = KeeEntry.get_xml_element(uuid=(base64.b64encode(uuid.uuid4().bytes)).decode("utf-8"), icon_id=0,
-                                                 strings=self.create_state.get_rawstrings())
+            if self.create_state.type == "Entry":
+                entry_obj = KeeEntry.get_xml_element(icon_id=0,
+                                                     strings=self.create_state.get_rawstrings())
+                group_item.append(entry_obj)
+            elif self.create_state.type == "Group":
 
-            group_item.append(entry_obj)
+                name = "None"
+                for key, value in self.create_state.get_rawstrings():
+                    if key == "Name":
+                        name = value
+
+                group_obj = KeeGroup.get_xml_element(name, icon_id=37)
+                group_item.append(group_obj)
+
             group_item.activate()
 
             self.update_kdb_in_db()
-            self.create_state = None
+
+        self.create_state = None
 
     def update_kdb_in_db(self):
         self.kdb.object_root = self._root_obj
         user = self.get_user()
 
         """Write to new file"""
-        with open(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx', 'wb') as output:
+        with open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'wb') as output:
             self.kdb.write_to(output)
 
         """Saving to database"""
-        with open(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx', 'rb+') as file:
+        with open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'rb+') as file:
             user.file = file.read()
             user.save()
 
         """Removing downloaded file"""
-        os.remove(TEMP_FOLDER + '/' + str(user.id) + str(user.username) + '.kdbx')
+        os.remove(TEMP_FOLDER + '/' + str(user.username) + '.kdbx')
 
 
 class CreateState:
-    def __init__(self):
-        self.fields = {"Title": None,
-                       "Username": None,
-                       "Password": None,
-                       "URL": None,
-                       "Notes": None}
-        self.req_fields = ["Title", "Username", "Password"]
-        self.current_field = "Title"
+    def __init__(self,type):
         # Entry or Group
-        self.type = "Entry"
+        if type != "Entry" and type != "Group":
+            raise KeyError("Choises are (Entry, Group)")
+        self.type = type
+        if type == 'Entry':
+            self.fields = {"Title": None,
+                           "UserName": None,
+                           "Password": None,
+                           "URL": None,
+                           "Notes": None}
+            self.req_fields = ["Title", "UserName", "Password"]
+            self.current_field = "Title"
+        if type == 'Group':
+            self.fields = {"Name": None,
+                           "Notes": None}
+            self.req_fields = ["Name", ]
+            self.current_field = "Name"
+
 
     def get_rawstrings(self):
         rawstrings = []
@@ -327,7 +354,7 @@ class CreateState:
         self.set_cur_field(prev_field)
 
     def __generate_text(self):
-        message_text = "_______Create new_______" + new_line
+        message_text = "_______Create New " + self.type + "_______" + new_line
         for field in self.fields.keys():
             if self.current_field == field:
                 message_text += f"{arrow_right_emo}"
@@ -398,7 +425,10 @@ class KeeGroup(BaseKeePass):
             self.__init_groups()
 
     def __str__(self):
-        return self.name
+        if self.name:
+            return self.name
+        else:
+            return " "
 
     def append(self,entry_obj):
         parser = objectify.makeparser()
@@ -422,20 +452,23 @@ class KeeGroup(BaseKeePass):
             self.items.append(KeeGroup(self._root, self, group))
             self.size += 1
 
-    def get_xml_element(self):
+    @classmethod
+    def get_xml_element(cls, name, icon_id):
+        uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
+
         group = Element("Group")
 
-        uuid = SubElement(group, 'UUID')
-        uuid.text = self.uuid
+        uuid_el = SubElement(group, 'UUID')
+        uuid_el.text = uuid
 
-        name = SubElement(group, 'Name')
-        name.text = self.name
+        name_el = SubElement(group, 'Name')
+        name_el.text = name
 
         notes = SubElement(group, 'Notes')
         notes.text = ""
 
         iconID = SubElement(group, 'IconID')
-        iconID.text = str(self.icon_id)
+        iconID.text = str(icon_id)
 
         # ------Times
         times = SubElement(group, "Times")
@@ -486,6 +519,13 @@ class KeeGroup(BaseKeePass):
         return self._group_obj
 
 
+    def delete(self):
+        self.deactivate()
+        self._group_obj.getparent().remove(self._group_obj)
+        KeePass.get_active_item().refresh_items()
+        self._root.update_kdb_in_db()
+
+
 class KeeEntry(BaseKeePass):
 
     def __init__(self, root, parent, entry_obj):
@@ -519,7 +559,9 @@ class KeeEntry(BaseKeePass):
                 self.password = string.value
 
     @classmethod
-    def get_xml_element(cls, uuid, icon_id, strings):
+    def get_xml_element(cls, icon_id, strings):
+        uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
+
         entry = Element("Entry")
 
         uuid_el = SubElement(entry, 'UUID')

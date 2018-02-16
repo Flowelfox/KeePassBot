@@ -23,6 +23,7 @@ class User(BaseModel):
     password_needed = BooleanField(default=True)
     create_state = BooleanField(default=False)
     notification = BooleanField(default=True)
+    chat_id = IntegerField(default=0)
 
     class Meta:
         order_by = ('username',)
@@ -45,9 +46,11 @@ def create_custom_columns():
     migrator = SqliteMigrator(database)
 
     new_column = BooleanField(default=True)
+    chat_id = IntegerField(default=0)
 
     migrate(
-        migrator.add_column('user', 'notification', new_column),
+        #migrator.add_column('user', 'notification', new_column),
+        migrator.add_column('user', 'chat_id', chat_id),
     )
 
 if __name__ == "__main__":
