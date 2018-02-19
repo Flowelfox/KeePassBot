@@ -1,6 +1,7 @@
 import base64
 import uuid as uuidGenerator
 from abc import ABC, abstractmethod
+from enum import Enum
 from pprint import pprint
 
 import lxml
@@ -65,7 +66,7 @@ class KeePass:
         self.type = "Manager"
         self.path = path
         self.opened = False
-        self.create_state = None
+        self.add_edit_state = None
         self.root_group = None
         self.username = None
 
@@ -95,20 +96,22 @@ class KeePass:
 
         message_buttons = []
 
-        message_buttons.append(
-            [InlineKeyboardButton(text=arrow_left_emo, callback_data="Left"),
-             InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
-             InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
-             InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")])
-
         if KeePass.get_active_item() and KeePass.get_active_item().type == "Entry":
+            message_buttons.append(
+                [InlineKeyboardButton(text=pencil_emo, callback_data=f"Edit_{KeePass.get_active_item().uuid}"),
+                 InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
+                 InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
+                 InlineKeyboardButton(text=x_emo, callback_data="Delete")])
             if getattr(KeePass.get_active_item(), 'really_delete', False):
                 message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                         InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
-            else:
-                message_buttons.append([InlineKeyboardButton(text=x_emo + "Delete" + x_emo, callback_data="Delete")])
             InlineKeyboardMarkup(message_buttons)
         else:
+            message_buttons.append(
+                [InlineKeyboardButton(text=arrow_left_emo, callback_data="Left"),
+                 InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
+                 InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
+                 InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")])
             i = 0
             if KeePass.get_active_item() != self.root_group:
                 if getattr(KeePass.get_active_item(), 'really_delete', False):
@@ -235,36 +238,46 @@ class KeePass:
 
         temp_group.activate()
 
-    def create_new(self, type):
-        self.create_state = CreateState(type)
-        return self.create_state.get_message()
+    def add_edit(self, type=None, obj=None):
+        self.add_edit_state = AddEditState(type, obj)
+        return self.add_edit_state.get_message()
 
-    def end_creating(self):
-        if self.create_state and self.get_user().create_state:
+    def end_creating(self, process_type):
+        if self.add_edit_state and self.get_user().create_state:
+
 
             group_item = KeePass.get_active_item()
             while not group_item.type == "Group":
                 group_item = group_item.get_parent()
 
-            if self.create_state.type == "Entry":
+            if self.add_edit_state.type == "Entry":
                 entry_obj = KeeEntry.get_xml_element(icon_id=0,
-                                                     strings=self.create_state.get_rawstrings())
-                group_item.append(entry_obj)
-            elif self.create_state.type == "Group":
+                                                     strings=self.add_edit_state.get_rawstrings())
+                if process_type == "Add":
+                    group_item.append(entry_obj)
+                elif process_type == "Edit":
+                    self.get_item_by_uuid(entry_obj.uuid).delete() # TODO: Find and delete by UUID
+                    group_item.append(entry_obj)
+            elif self.add_edit_state.type == "Group":
 
                 name = "None"
-                for key, value in self.create_state.get_rawstrings():
+                for key, value in self.add_edit_state.get_rawstrings():
                     if key == "Name":
                         name = value
 
                 group_obj = KeeGroup.get_xml_element(name, icon_id=37)
-                group_item.append(group_obj)
+                if process_type == "Add":
+                    group_item.append(group_obj)
+                elif process_type == "Edit":
+                    self.get_item_by_uuid(group_obj.uuid).delete()
+                    group_item.append(group_obj)
+
 
             group_item.activate()
 
             self.update_kdb_in_db()
 
-        self.create_state = None
+        self.add_edit_state = None
 
     def update_kdb_in_db(self):
         self.kdb.object_root = self._root_obj
@@ -282,14 +295,22 @@ class KeePass:
         """Removing downloaded file"""
         os.remove(TEMP_FOLDER + '/' + str(user.username) + '.kdbx')
 
+class AddEditState:
+    # TODO: Implement ENUMS
 
-class CreateState:
-    def __init__(self,type):
+    def __init__(self, type=None, obj=None):
         # Entry or Group
         if type != "Entry" and type != "Group":
-            raise KeyError("Choises are (Entry, Group)")
-        self.type = type
-        if type == 'Entry':
+            if obj is not None:
+                self.type = obj.type
+                self.process_type = "Edit"
+            else:
+                raise KeyError("Choises are (Entry, Group)")
+        else:
+            self.type = type
+            self.process_type = "Add"
+
+        if self.type == 'Entry':
             self.fields = {"Title": None,
                            "UserName": None,
                            "Password": None,
@@ -297,11 +318,18 @@ class CreateState:
                            "Notes": None}
             self.req_fields = ["Title", "UserName", "Password"]
             self.current_field = "Title"
-        if type == 'Group':
+            if obj is not None:
+                for field_name in self.fields.keys():
+                    self.fields[field_name] = obj.get_string_by_name(field_name)
+        if self.type == 'Group':
             self.fields = {"Name": None,
                            "Notes": None}
             self.req_fields = ["Name", ]
             self.current_field = "Name"
+            if obj is not None:
+                self.fields["Name"] = obj.name
+                self.fields["Notes"] = obj.notes
+
 
 
     def get_rawstrings(self):
@@ -430,7 +458,7 @@ class KeeGroup(BaseKeePass):
         else:
             return " "
 
-    def append(self,entry_obj):
+    def append(self, entry_obj):
         parser = objectify.makeparser()
         entry_obj = objectify.fromstring(etree.tounicode(entry_obj), parser)
 
@@ -518,7 +546,6 @@ class KeeGroup(BaseKeePass):
     def get_group_obj(self):
         return self._group_obj
 
-
     def delete(self):
         self.deactivate()
         self._group_obj.getparent().remove(self._group_obj)
@@ -557,6 +584,14 @@ class KeeEntry(BaseKeePass):
         for string in self.strings:
             if string.key == "Password":
                 self.password = string.value
+
+    def get_string_by_name(self, key):
+        if key is None:
+            return
+        for string in self.strings:
+            if string.key == key:
+                return string.value
+
 
     @classmethod
     def get_xml_element(cls, icon_id, strings):

@@ -247,6 +247,34 @@ def show_group(bot, update):
             bot.answer_callback_query(update.callback_query.id)
             return
 
+    if data.startswith("Edit_"):
+        if KeePass.active_item:
+            uuid = data.replace("Edit_", "")
+            if len(uuid) == 24:
+                message_text, message_markup = keepass.add_edit(obj=keepass.get_item_by_uuid(uuid))
+                # Entering in create state
+                user = keepass.get_user()
+                user.create_state = True
+                user.save()
+
+                try:
+                    bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
+                                          message_id=user.interface_message_id,
+                                          text=message_text,
+                                          reply_markup=message_markup,
+                                          parse_mode=telegram.ParseMode.HTML)
+                except Exception as e:
+                    print(e)
+
+                if user.notification:
+                    bot.send_message(chat_id=update.message.chat_id,
+                                     text="Click on the field name to set the value for it.\nSend the text to set the value.\nBold fields are required.\nYou can use the arrows buttons to switch between fields.")
+            else:
+                bot.send_message(chat_id=update.message.chat_id, text="Wrong edit uuid, try again.\nIf the problem persists, please write to administrator")
+
+        bot.answer_callback_query(update.callback_query.id)
+        return
+
     if data == "ReallyDelete":
         if KeePass.active_item:
             KeePass.active_item.delete()
@@ -305,9 +333,9 @@ def create(bot, update):
 
     keepass = opened_databases[update.message.from_user.name]
     if args.lower() in "group":
-        message_text, message_markup = keepass.create_new("Group")
+        message_text, message_markup = keepass.add_edit("Group")
     elif args.lower() in "entry":
-        message_text, message_markup = keepass.create_new("Entry")
+        message_text, message_markup = keepass.add_edit("Entry")
     else:
         bot.send_message(chat_id=update.message.chat_id,
                          text="Wrong arguments, choices are: 'Entry', 'Group', 'e', 'g'\nExample: /create Group")
@@ -337,14 +365,14 @@ def create_query(bot, update):
     keepass = opened_databases[update.callback_query.from_user.name]
 
     if data == "done":
-        for field in keepass.create_state.req_fields:
-            if not keepass.create_state.fields[field]:
+        for field in keepass.add_edit_state.req_fields:
+            if not keepass.add_edit_state.fields[field]:
                 bot.send_message(chat_id=update.callback_query.message.chat_id,
                                  text="Please fill required fields")
                 bot.answer_callback_query(update.callback_query.id)
                 return
 
-        keepass.end_creating()
+        keepass.end_creating(keepass.add_edit_state.process_type)
 
         user = User.get_or_none(username=update.callback_query.from_user.name)
         user.create_state = False
@@ -376,17 +404,17 @@ def create_query(bot, update):
         bot.answer_callback_query(update.callback_query.id)
         return
     elif data == "Left":
-        keepass.create_state.prev_field()
+        keepass.add_edit_state.prev_field()
         bot.answer_callback_query(update.callback_query.id)
     elif data == "Right":
-        keepass.create_state.next_field()
+        keepass.add_edit_state.next_field()
         bot.answer_callback_query(update.callback_query.id)
     elif data == "generate_password":
-        keepass.create_state.generate_password()
+        keepass.add_edit_state.generate_password()
     else:
-        keepass.create_state.set_cur_field(data)
+        keepass.add_edit_state.set_cur_field(data)
 
-    message_text, message_markup = keepass.create_state.get_message()
+    message_text, message_markup = keepass.add_edit_state.get_message()
     try:
         user = User.get_or_none(username=update.callback_query.from_user.name)
         bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
@@ -410,19 +438,22 @@ def message_in_create(bot, update):
         bot.send_message(chat_id=update.message.chat_id,
                          text="New value too long. Please send text bellow 40 chars")
         return
-
-    keepass.create_state.set_cur_field_value(update.message.text)
-    keepass.create_state.next_field()
-    message_text, message_markup = keepass.create_state.get_message()
     try:
-        bot.edit_message_text(chat_id=update.message.chat_id,
-                              message_id=user.interface_message_id,
-                              text=message_text,
-                              reply_markup=message_markup,
-                              parse_mode=telegram.ParseMode.HTML)
+        keepass.add_edit_state.set_cur_field_value(update.message.text)
+        keepass.add_edit_state.next_field()
+        message_text, message_markup = keepass.add_edit_state.get_message()
+        try:
+            bot.edit_message_text(chat_id=update.message.chat_id,
+                                  message_id=user.interface_message_id,
+                                  text=message_text,
+                                  reply_markup=message_markup,
+                                  parse_mode=telegram.ParseMode.HTML)
 
-    except Exception as e:
-        print(e)
+        except Exception as e:
+            print(e)
+    except AttributeError:
+        user.create_state = False
+        user.save()
 
 
 @set_chat_id
