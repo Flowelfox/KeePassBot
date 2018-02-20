@@ -3,11 +3,12 @@ import logging
 import os
 
 import telegram
+from io import StringIO, BytesIO
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 
 import CustomFilters
-from KeePass import KeePass
+from KeePass import KeePass, ItemType
 from Models import User
 from settings import *
 
@@ -181,6 +182,43 @@ def not_opened(bot, update):
 def show_group(bot, update):
     data = update.callback_query.data
     user = User.get_or_none(username=update.callback_query.from_user.name)
+    chat = bot.getChat(update.callback_query.message.chat_id)
+
+    if data == "Nothing":
+        bot.answer_callback_query(update.callback_query.id)
+        return
+    if data == "Resend":
+        keepass = opened_databases[f'@{chat.username}']
+
+        # delete previous
+        try:
+            bot.delete_message(chat_id=update.callback_query.message.chat_id, message_id=user.interface_message_id)
+        except Exception as e:
+            print(e)
+
+        # send new
+        message_text, message_markup = keepass.get_message()
+        interface_message = bot.send_message(chat_id=update.callback_query.message.chat_id, text=message_text,
+                                             reply_markup=message_markup)
+
+        user.interface_message_id = interface_message.message_id
+        user.save()
+
+    if data == "Download":
+        keepass = opened_databases[f'@{chat.username}']
+
+        """Write to new memory file"""
+        output = BytesIO()
+        output.write(user.file)
+        output.name = keepass.root_group.name + '.kdbx'
+        output.seek(0)
+
+        """Send to user"""
+        bot.send_document(chat_id=chat.id,  document=output)
+        bot.send_message(chat_id=chat.id,  text=exm_mark_emo * 2 + "PLEASE REMOVE DATABASE FILE FROM HISTORY" + exm_mark_emo * 2,)
+        bot.answer_callback_query(update.callback_query.id)
+        return
+
     # File-key for database
     if data == "NoKey" or data == "YesKey":
 
@@ -251,7 +289,7 @@ def show_group(bot, update):
         if KeePass.active_item:
             uuid = data.replace("Edit_", "")
             if len(uuid) == 24:
-                message_text, message_markup = keepass.add_edit(obj=keepass.get_item_by_uuid(uuid))
+                message_text, message_markup = keepass.start_add_edit(obj=keepass.get_item_by_uuid(uuid))
                 # Entering in create state
                 user = keepass.get_user()
                 user.create_state = True
@@ -283,7 +321,10 @@ def show_group(bot, update):
             return
 
     if data == "NoDelete":
-        del KeePass.active_item.really_delete
+        try:
+            del KeePass.active_item.really_delete
+        except AttributeError:
+            pass
         message_text, message_markup = keepass.get_message()
         try:
             bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
@@ -333,9 +374,9 @@ def create(bot, update):
 
     keepass = opened_databases[update.message.from_user.name]
     if args.lower() in "group":
-        message_text, message_markup = keepass.add_edit("Group")
+        message_text, message_markup = keepass.start_add_edit(ItemType.GROUP)
     elif args.lower() in "entry":
-        message_text, message_markup = keepass.add_edit("Entry")
+        message_text, message_markup = keepass.start_add_edit(ItemType.ENTRY)
     else:
         bot.send_message(chat_id=update.message.chat_id,
                          text="Wrong arguments, choices are: 'Entry', 'Group', 'e', 'g'\nExample: /create Group")
@@ -372,7 +413,7 @@ def create_query(bot, update):
                 bot.answer_callback_query(update.callback_query.id)
                 return
 
-        keepass.end_creating(keepass.add_edit_state.process_type)
+        keepass.finish_add_edit()
 
         user = User.get_or_none(username=update.callback_query.from_user.name)
         user.create_state = False
@@ -383,8 +424,6 @@ def create_query(bot, update):
                               message_id=user.interface_message_id,
                               text=message_text,
                               reply_markup=message_markup)
-        bot.send_message(chat_id=update.callback_query.message.chat_id,
-                         text="Item created")
         bot.answer_callback_query(update.callback_query.id)
         return
 
@@ -393,7 +432,7 @@ def create_query(bot, update):
         user.create_state = False
         user.save()
 
-        keepass.end_creating()
+        keepass.finish_add_edit()
 
         message_text, message_markup = keepass.get_message()
         bot.edit_message_text(chat_id=update.callback_query.message.chat_id,
@@ -524,25 +563,22 @@ def resend_interface(bot, update):
     interface_message = bot.send_message(chat_id=update.message.chat_id, text=message_text,
                                          reply_markup=message_markup)
 
-    user.is_opened = True
     user.interface_message_id = interface_message.message_id
     user.save()
 
 
 def get_database(bot, update):
     user = User.get_or_none(username=update.message.from_user.name)
-    """Write to new file"""
-    with open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'wb') as output:
-        output.write(user.file)
+    keepass = opened_databases[update.message.from_user.name]
+
+    """Write to new memory file"""
+    output = BytesIO()
+    output.write(user.file)
+    output.name = keepass.root_group.name + '.kdbx'
+    output.seek(0)
 
     """Send to user"""
-    bot.send_document(chat_id=update.message.chat_id,
-                      document=open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'rb'))
-
-    """Removing downloaded file"""
-    os.remove(TEMP_FOLDER + '/' + str(user.username) + '.kdbx')
-    bot.send_message(chat_id=update.message.chat_id,
-                     text=exm_mark_emo * 2 + "PLEASE REMOVE DATABASE FILE FROM HISTORY" + exm_mark_emo * 2)
+    bot.send_document(chat_id=update.message.chat_id, text=exm_mark_emo * 2 + "PLEASE REMOVE DATABASE FILE FROM HISTORY" + exm_mark_emo * 2,  document=output)
 
 
 @set_chat_id

@@ -19,6 +19,21 @@ from Models import User
 from settings import *
 
 
+class ItemType(Enum):
+    GROUP = "Group"
+    ENTRY = "Entry"
+    STRING = "String"
+    MANAGER = "Manager"
+
+    def __str__(self):
+        return self.value
+
+
+class ProcessType(Enum):
+    ADD = "Add"
+    EDIT = "Edit"
+
+
 class BaseKeePass(ABC):
 
     def __init__(self, root, parent):
@@ -63,17 +78,16 @@ class KeePass:
 
     def __init__(self, path):
         self.name = "KeePassManager"
-        self.type = "Manager"
+        self.type = ItemType.MANAGER
         self.path = path
         self.opened = False
         self.add_edit_state = None
         self.root_group = None
-        self.username = None
+        self.user = None
 
     def __str__(self):
         if not self.opened:
             raise IOError("Databse not opened")
-
         return str(self.root_group)
 
     @staticmethod
@@ -81,44 +95,69 @@ class KeePass:
         return KeePass.active_item
 
     def get_user(self):
-        return User.get_or_none(username=self.username)
+        self.user = User.get_or_none(username=self.user.username)
+        return self.user
 
-    def __init_root_group(self):
+    def _init_root_group(self):
         if not self.opened:
             raise IOError("Databse not opened")
 
-        root_group = self._root_obj.find('./Root/Group')
-        self.root_group = KeeGroup(self, None, root_group)
+        def inner_init(root_group_obj, cur_group):
+            for item in root_group_obj.findall('Group') + root_group_obj.findall('Entry'):
+                if item.tag == str(ItemType.GROUP):
+                    new_group = KeeGroup(root=self, parent=cur_group, name=item.Name.text, notes=item.Notes.text, icond_id=item.IconID.text, uuid=item.UUID.text)
+                    cur_group.append(new_group)
+                    inner_init(item, new_group)
+                if item.tag == str(ItemType.ENTRY):
+                    new_entry = KeeEntry(root=self, parent=cur_group, icond_id=item.IconID.text, uuid=item.UUID.text)
+                    for string in item.findall('String'):
+                        new_entry.append(EntryString(root=self, parent=new_entry, key=string.Key.text, value=string.Value.text))
+                    cur_group.append(new_entry)
 
-    def __generate_keyboard(self):
+        root_group_obj = self._root_obj.find('./Root/Group')
+        self.root_group = KeeGroup(root=self, parent=None, name=root_group_obj.Name.text, notes=root_group_obj.Notes.text, icond_id=root_group_obj.IconID.text, uuid=root_group_obj.UUID.text)
+        inner_init(root_group_obj, self.root_group)
+        pass
+
+    def _generate_keyboard(self):
         if not self.opened:
             raise IOError("Databse not opened")
 
         message_buttons = []
+        message_buttons.append(
+            [InlineKeyboardButton(text=arrow_left_emo, callback_data="Left"),
+             InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
+             InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
+             InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")])
+        if KeePass.get_active_item() == self.root_group:
+            delete_but = InlineKeyboardButton(text=black_x_emo, callback_data="Nothing")
+        else:
+            delete_but = InlineKeyboardButton(text=x_emo, callback_data="Delete")
+        second_row = \
+            [InlineKeyboardButton(text=pencil_emo, callback_data=f"Edit_{KeePass.get_active_item().uuid}"),
+             InlineKeyboardButton(text=repeat_emo, callback_data="Resend"),
+             InlineKeyboardButton(text=arrow_down_emo, callback_data="Download"),
+             delete_but]
 
-        if KeePass.get_active_item() and KeePass.get_active_item().type == "Entry":
-            message_buttons.append(
-                [InlineKeyboardButton(text=pencil_emo, callback_data=f"Edit_{KeePass.get_active_item().uuid}"),
-                 InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
-                 InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
-                 InlineKeyboardButton(text=x_emo, callback_data="Delete")])
+        if KeePass.get_active_item() and KeePass.get_active_item().type == ItemType.ENTRY:
             if getattr(KeePass.get_active_item(), 'really_delete', False):
                 message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                         InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
+            else:
+                message_buttons.append(second_row)
             InlineKeyboardMarkup(message_buttons)
         else:
-            message_buttons.append(
-                [InlineKeyboardButton(text=arrow_left_emo, callback_data="Left"),
-                 InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
-                 InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
-                 InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")])
             i = 0
             if KeePass.get_active_item() != self.root_group:
                 if getattr(KeePass.get_active_item(), 'really_delete', False):
                     message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                             InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
                 else:
-                    message_buttons.append([InlineKeyboardButton(text=x_emo + "Delete current group" + x_emo, callback_data="Delete")])
+                    message_buttons.append(second_row)
+            else:
+                message_buttons.append(second_row)
+
+
 
             for item in KeePass.get_active_item().items:
                 if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
@@ -131,64 +170,67 @@ class KeePass:
         self.kdb.close()
 
     def open(self, username, password=None, keyfile_path=None):
-        self.username = username
-        user = self.get_user()
+
+        self.user = User.get_or_none(username=username)
 
         try:
             with libkeepass.open(filename=self.path, password=password, keyfile=keyfile_path, unprotect=False) as kdb:
                 self.kdb = kdb
-                user.is_opened = True
-                user.save()
+                self.user.is_opened = True
+                self.user.save()
                 self._root_obj = kdb.obj_root
                 # print(etree.tounicode(self._root_obj, pretty_print=True))
 
                 self.opened = True
-                self.__init_root_group()
+                self._init_root_group()
                 self.root_group.activate()
 
         except IOError:
             raise IOError("Master key or key-file wrong")
+        except UnicodeDecodeError:
+            raise IOError("Critical error, please report to administrator.")
 
     def get_message(self):
         if not self.opened:
             raise IOError("Database not opened")
 
         message_text = ""
+        active_item = KeePass.get_active_item()
 
-        if KeePass.get_active_item().type == "Entry":
-            message_text += "_______" + key_emo + KeePass.get_active_item().name + "_______" + new_line
+        if active_item.type == ItemType.ENTRY:
+            message_text += "_______" + key_emo + active_item.name + "_______" + new_line
             i = 0
-            for string in KeePass.get_active_item().strings:
-                if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
+            for item in active_item.items:
+                if active_item.page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= active_item.page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
                     try:
-                        message_text += str(string) + new_line
+                        message_text += str(item) + new_line
                     except TypeError:
                         continue
                 i += 1
             if i > NUMBER_OF_ENTRIES_ON_PAGE:
-                message_text += "_______Page {0} of {1}_______".format(KeePass.get_active_item().page, int(
-                    math.ceil(KeePass.get_active_item().size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
+                message_text += "_______Page {0} of {1}_______".format(active_item.page, int(
+                    math.ceil(active_item.size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
             else:
-                message_text += "_______Page {0} of {1}_______".format(KeePass.get_active_item().page, 1) + new_line
+                message_text += "_______Page {0} of {1}_______".format(active_item.page, 1) + new_line
 
-        if KeePass.get_active_item().type == "Group":
+        if active_item.type == ItemType.GROUP:
 
-            message_text += "_______" + str(KeePass.get_active_item()) + "_______" + new_line
+            message_text += "_______" + str(active_item) + "_______" + new_line
             i = 0
-            for item in KeePass.get_active_item().items:
-                if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
-                    if item.type == "Entry":
+            for item in active_item.items:
+                if active_item.page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= active_item.page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
+                    if item.type == ItemType.ENTRY:
                         message_text += key_emo + str(item) + new_line
-                    if item.type == "Group":
+                    if item.type == ItemType.GROUP:
                         message_text += folder_emo + str(item) + new_line
                 i += 1
             if i > NUMBER_OF_ENTRIES_ON_PAGE:
-                message_text += "_______Page {0} of {1}_______".format(KeePass.get_active_item().page, int(
-                    math.ceil(KeePass.get_active_item().size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
+                message_text += "_______Page {0} of {1}_______".format(active_item.page, int(
+                    math.ceil(active_item.size / NUMBER_OF_ENTRIES_ON_PAGE))) + new_line
             else:
-                message_text += "_______Page {0} of {1}_______".format(KeePass.get_active_item().page, 1) + new_line
+                message_text += "_______Page {0} of {1}_______".format(active_item.page, 1) + new_line
 
-        message_markup = self.__generate_keyboard()
+        message_markup = self._generate_keyboard()
 
         return message_text, message_markup
 
@@ -202,7 +244,7 @@ class KeePass:
             if word.lower() in parent_item.name.lower():
                 finded_items.append(parent_item)
             for item in parent_item.items:
-                if item.type == "Group":
+                if item.type == ItemType.GROUP:
                     __inner_find(item)
                 if word.lower() in item.name.lower():
                     finded_items.append(item)
@@ -219,7 +261,7 @@ class KeePass:
             if parent_item.uuid == word:
                 return parent_item
             for item in parent_item.items:
-                if item.type == "Group":
+                if item.type == ItemType.GROUP:
                     finded_elem = __inner_find(item)
                     if finded_elem:
                         return finded_elem
@@ -238,40 +280,50 @@ class KeePass:
 
         temp_group.activate()
 
-    def add_edit(self, type=None, obj=None):
+    def start_add_edit(self, type=None, obj=None):
         self.add_edit_state = AddEditState(type, obj)
         return self.add_edit_state.get_message()
 
-    def end_creating(self, process_type):
+    def finish_add_edit(self):
         if self.add_edit_state and self.get_user().create_state:
+            process_type = self.add_edit_state.process_type
 
-
+            """Get parent group"""
             group_item = KeePass.get_active_item()
-            while not group_item.type == "Group":
+            while not group_item.type == ItemType.GROUP:
                 group_item = group_item.get_parent()
 
-            if self.add_edit_state.type == "Entry":
-                entry_obj = KeeEntry.get_xml_element(icon_id=0,
-                                                     strings=self.add_edit_state.get_rawstrings())
-                if process_type == "Add":
-                    group_item.append(entry_obj)
-                elif process_type == "Edit":
-                    self.get_item_by_uuid(entry_obj.uuid).delete() # TODO: Find and delete by UUID
-                    group_item.append(entry_obj)
-            elif self.add_edit_state.type == "Group":
+            """If we working with Entry"""
+            if self.add_edit_state.type == ItemType.ENTRY:
 
-                name = "None"
+                if process_type == ProcessType.ADD:
+                    entry = KeeEntry(root=self, parent=group_item)
+                    for key, value in self.add_edit_state.get_rawstrings():
+                        entry.append(EntryString(root=self, parent=entry, key=key, value=value))
+                    group_item.append(entry)
+
+                elif process_type == ProcessType.EDIT:
+                    entry = KeePass.get_active_item()
+                    for key, value in self.add_edit_state.get_rawstrings():
+                        entry.update_item(key, value)
+
+            elif self.add_edit_state.type == ItemType.GROUP:
+                gr_name = "None"
                 for key, value in self.add_edit_state.get_rawstrings():
                     if key == "Name":
-                        name = value
+                        gr_name = value
 
-                group_obj = KeeGroup.get_xml_element(name, icon_id=37)
-                if process_type == "Add":
-                    group_item.append(group_obj)
-                elif process_type == "Edit":
-                    self.get_item_by_uuid(group_obj.uuid).delete()
-                    group_item.append(group_obj)
+                if process_type == ProcessType.ADD:
+                    group = KeeGroup(root=self, parent=group_item, name=gr_name)
+                    group_item.append(group)
 
+                elif process_type == ProcessType.EDIT:
+                    group = KeePass.get_active_item()
+                    for key, value in self.add_edit_state.get_rawstrings():
+                        if key == 'Name':
+                            group.name = value
+                        if key == 'Note':
+                            group.notes = value
 
             group_item.activate()
 
@@ -282,6 +334,7 @@ class KeePass:
     def update_kdb_in_db(self):
         self.kdb.object_root = self._root_obj
         user = self.get_user()
+        # print(etree.tounicode(self._root_obj, pretty_print=True))
 
         """Write to new file"""
         with open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'wb') as output:
@@ -295,33 +348,32 @@ class KeePass:
         """Removing downloaded file"""
         os.remove(TEMP_FOLDER + '/' + str(user.username) + '.kdbx')
 
-class AddEditState:
-    # TODO: Implement ENUMS
 
+class AddEditState:
     def __init__(self, type=None, obj=None):
         # Entry or Group
-        if type != "Entry" and type != "Group":
+        if type != ItemType.ENTRY and type != ItemType.GROUP:
             if obj is not None:
                 self.type = obj.type
-                self.process_type = "Edit"
+                self.process_type = ProcessType.EDIT
             else:
                 raise KeyError("Choises are (Entry, Group)")
         else:
             self.type = type
-            self.process_type = "Add"
+            self.process_type = ProcessType.ADD
 
-        if self.type == 'Entry':
+        if self.type == ItemType.ENTRY:
             self.fields = {"Title": None,
-                           "UserName": None,
+                           "Username": None,
                            "Password": None,
                            "URL": None,
                            "Notes": None}
-            self.req_fields = ["Title", "UserName", "Password"]
+            self.req_fields = ["Title", "Username", "Password"]
             self.current_field = "Title"
             if obj is not None:
                 for field_name in self.fields.keys():
-                    self.fields[field_name] = obj.get_string_by_name(field_name)
-        if self.type == 'Group':
+                    self.fields[field_name] = obj.get_item(field_name).value
+        if self.type == ItemType.GROUP:
             self.fields = {"Name": None,
                            "Notes": None}
             self.req_fields = ["Name", ]
@@ -329,8 +381,6 @@ class AddEditState:
             if obj is not None:
                 self.fields["Name"] = obj.name
                 self.fields["Notes"] = obj.notes
-
-
 
     def get_rawstrings(self):
         rawstrings = []
@@ -382,7 +432,7 @@ class AddEditState:
         self.set_cur_field(prev_field)
 
     def __generate_text(self):
-        message_text = "_______Create New " + self.type + "_______" + new_line
+        message_text = "_______Create New " + str(self.type) + "_______" + new_line
         for field in self.fields.keys():
             if self.current_field == field:
                 message_text += f"{arrow_right_emo}"
@@ -421,36 +471,46 @@ class AddEditState:
 
 
 class KeeGroup(BaseKeePass):
-    def __init__(self, root, parent, group_obj, fake=False, items=None, name="Search"):
+    def __init__(self, root, parent, name, notes="", icond_id='37', uuid=""):
         if parent is None:
             parent = self
-
         super().__init__(root, parent)
-        if fake:
-            self.type = "Group"
-            self.name = name
-            self.uuid = None
-            self.notes = None
-            self.icon_id = None
-            self.items = items
-            for item in self.items:
-                item._parent = self
-                item._root = root
-
-            # init group object
-            parser = objectify.makeparser()
-            self._group_obj = objectify.fromstring(etree.tounicode(self.get_xml_element()), parser)
-
+        # if fake:
+        #     self.type = ItemType.GROUP
+        #     self.name = name
+        #     self.uuid = None
+        #     self.notes = None
+        #     self.icon_id = None
+        #     self.items = items
+        #     for item in self.items:
+        #         item._parent = self
+        #         item._root = root
+        #
+        #     # init group object
+        #     parser = objectify.makeparser()
+        #     self._group_obj = objectify.fromstring(etree.tounicode(self.get_xml_element()), parser)
+        #
+        # else:
+        #     self.type = ItemType.GROUP
+        #     self._group_obj = group_obj
+        #     self.name = group_obj.Name.text
+        #     self.uuid = group_obj.UUID.text
+        #     self.notes = group_obj.Notes.text
+        #     self.icon_id = int(group_obj.IconID.text)
+        #     self.items = []
+        #     self._init_entries()
+        #     self._init_groups()
+        if not uuid:
+            self.uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
         else:
-            self.type = "Group"
-            self._group_obj = group_obj
-            self.name = group_obj.Name.text
-            self.uuid = group_obj.UUID.text
-            self.notes = group_obj.Notes.text
-            self.icon_id = int(group_obj.IconID.text)
-            self.items = []
-            self.__init_entries()
-            self.__init_groups()
+            self.uuid = uuid
+
+        self.type = ItemType.GROUP
+        self.name = name
+        self.notes = notes
+        self.icon_id = int(icond_id)
+        self.items = []
+        self.size = 0
 
     def __str__(self):
         if self.name:
@@ -458,31 +518,21 @@ class KeeGroup(BaseKeePass):
         else:
             return " "
 
-    def append(self, entry_obj):
-        parser = objectify.makeparser()
-        entry_obj = objectify.fromstring(etree.tounicode(entry_obj), parser)
-
-        self.get_group_obj().append(entry_obj)
-        self.refresh_items()
-
-    def refresh_items(self):
-        self.items = []
-        self.__init_entries()
-        self.__init_groups()
-
-    def __init_entries(self):
-        for entry in self._group_obj.findall('Entry'):
-            self.items.append(KeeEntry(self._root, self, entry))
-            self.size += 1
-
-    def __init_groups(self):
-        for group in self._group_obj.findall('Group'):
-            self.items.append(KeeGroup(self._root, self, group))
-            self.size += 1
+    def append(self, item):
+        """
+        Adding new entry to group
+        :param item: KeeEntry like object
+        :return: None
+        """
+        if not isinstance(item, KeeEntry) and not isinstance(item, KeeGroup):
+            raise TypeError("KeeGroup accepts only KeeEntry or KeeGroup items")
+        self.items.append(item)
+        self.size += 1
 
     @classmethod
-    def get_xml_element(cls, name, icon_id):
-        uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
+    def get_xml_element(cls, name, icon_id, uuid=""):
+        if not uuid:
+            uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
 
         group = Element("Group")
 
@@ -541,61 +591,82 @@ class KeeGroup(BaseKeePass):
         last_top_vis_entry = SubElement(group, "LastTopVisibleEntry")
         last_top_vis_entry.text = "AAAAAAAAAAAAAAAAAAAAAA=="
 
-        return group
-
-    def get_group_obj(self):
-        return self._group_obj
+        parser = objectify.makeparser()
+        group_obj = objectify.fromstring(etree.tounicode(group), parser)
+        return group_obj
 
     def delete(self):
         self.deactivate()
-        self._group_obj.getparent().remove(self._group_obj)
-        KeePass.get_active_item().refresh_items()
+        self._parent.items.remove(self)
         self._root.update_kdb_in_db()
 
 
 class KeeEntry(BaseKeePass):
 
-    def __init__(self, root, parent, entry_obj):
+    def __init__(self, root, parent, icond_id='0', uuid=""):
         super().__init__(root, parent)
-        self.type = "Entry"
-        self._entry_obj = entry_obj
-        self.uuid = self._entry_obj.UUID.text
-        self.icon_id = int(self._entry_obj.IconID.text)
-        self.strings = []
-        self.__init_strings()
-        self.__set_name()
-        self.__set_password()
+        if not uuid:
+            self.uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
+        else:
+            self.uuid = uuid
+        self.type = ItemType.ENTRY
+        self.icon_id = int(icond_id)
+        self.items = []
+        self.size = 0
+        self.name = ""
 
     def __str__(self):
         return self.name
 
-    def __init_strings(self):
+    def append(self, item):
+        if not isinstance(item, EntryString):
+            raise TypeError("KeeEntry accepts only EntryString items")
+        self.items.append(item)
+        self.size += 1
+        # also set name
+        if item.key == "Title":
+            self.name = item.value
+
+    def _init_strings(self):
         strings = self._entry_obj.findall('String')
+        self.strings = []
+        self.size = 0
         for string in strings:
             self.strings.append(EntryString(string.Key.text, string.Value.text))
             self.size += 1
 
-    def __set_name(self):
-        for string in self.strings:
-            if string.key == "Title":
-                self.name = string.value
-
-    def __set_password(self):
+    def _set_password(self):
         for string in self.strings:
             if string.key == "Password":
                 self.password = string.value
 
-    def get_string_by_name(self, key):
+    def update_item(self, key, value):
         if key is None:
             return
-        for string in self.strings:
-            if string.key == key:
-                return string.value
+        for item in self.items:
+            if item.key == key:
+                item.value = value
 
+    def get_item(self, key):
+        if key is None:
+            return
+        for item in self.items:
+            if item.key == key:
+                return item
+
+    def update(self, entry_obj):
+        parser = objectify.makeparser()
+        entry_obj = objectify.fromstring(etree.tounicode(entry_obj), parser)
+
+        self._entry_obj = entry_obj
+        self._init_strings()
+        self._set_password()
+        self.get_parent().refresh_items()
 
     @classmethod
-    def get_xml_element(cls, icon_id, strings):
-        uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
+    def get_xml_element(cls, icon_id, strings, uuid=""):
+        if not uuid:
+            uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
 
         entry = Element("Entry")
 
@@ -655,15 +726,20 @@ class KeeEntry(BaseKeePass):
 
     def delete(self):
         self.deactivate()
-        self._entry_obj.getparent().remove(self._entry_obj)
-        KeePass.get_active_item().refresh_items()
+        self._parent.items.remove(self)
         self._root.update_kdb_in_db()
 
 
-class EntryString():
-    def __init__(self, key, value=None):
+class EntryString(BaseKeePass):
+
+    def __init__(self, root, parent, key, value=None):
+        super().__init__(root, parent)
         self.key = key
         self.value = value
+        self.type = ItemType.STRING
+
+        if key == "Title":
+            self._parent.name = value
 
     @classmethod
     def get_xml_element(cls, key, value):
@@ -678,4 +754,12 @@ class EntryString():
         return string
 
     def __str__(self):
-        return self.key + " = " + self.value
+        if not self.value:
+            return self.key + " = "
+        else:
+            return self.key + " = " + self.value
+
+    def __setattr__(self, name, value):
+        if hasattr(self, 'key') and self.key == "Title":
+            self._parent.name = value
+        super().__setattr__(name, value)
