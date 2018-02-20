@@ -179,13 +179,18 @@ def show_group(bot, update):
     data = update.callback_query.data
     user = User.get_or_none(username=update.callback_query.from_user.name)
     chat = bot.getChat(update.callback_query.message.chat_id)
+    try:
+        keepass = opened_databases[f'@{chat.username}']
+    except KeyError as e:
+        logging.error("Key error: " + str(e))
+        bot.answer_callback_query(update.callback_query.id)
+        return
+
 
     if data == "Nothing":
         bot.answer_callback_query(update.callback_query.id)
         return
     if data == "Resend":
-        keepass = opened_databases[f'@{chat.username}']
-
         # delete previous
         try:
             bot.delete_message(chat_id=update.callback_query.message.chat_id, message_id=user.interface_message_id)
@@ -201,7 +206,6 @@ def show_group(bot, update):
         user.save()
 
     if data == "Download":
-        keepass = opened_databases[f'@{chat.username}']
 
         """Write to new memory file"""
         output = BytesIO()
@@ -251,12 +255,6 @@ def show_group(bot, update):
         elif not user.password_needed and user.key_file_needed:
             bot.send_message(chat_id=update.callback_query.message.chat_id, text="Send me key-file to open database")
 
-        return
-    try:
-        keepass = opened_databases[update.callback_query.from_user.name]
-    except KeyError as e:
-        logging.error("Key error: " + str(e))
-        bot.answer_callback_query(update.callback_query.id)
         return
 
     if data == "Lock":

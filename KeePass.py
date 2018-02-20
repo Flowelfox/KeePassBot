@@ -1,18 +1,15 @@
 import base64
+import datetime
+import math
 import uuid as uuidGenerator
-from abc import ABC, abstractmethod
+from abc import ABC
 from enum import Enum
-from pprint import pprint
+from io import BytesIO
 
-import lxml
-import os
-from lxml.etree import Element, SubElement
+import libkeepass
 from lxml import etree
 from lxml import objectify
-
-import datetime
-import libkeepass
-import math
+from lxml.etree import Element, SubElement
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from Models import User
@@ -82,13 +79,32 @@ class KeePass:
         self.path = path
         self.opened = False
         self.add_edit_state = None
+        self._root_obj = None
         self.root_group = None
+        self.search_group = None
         self.user = None
 
     def __str__(self):
         if not self.opened:
             raise IOError("Databse not opened")
         return str(self.root_group)
+
+    def generate_root(self):
+        base = Element("KeePassFile")
+
+        meta = self._root_obj.find("Meta")
+        base.append(meta)
+
+        root = Element("Root")
+        root.append(self.root_group.get_xml_element())
+        SubElement(root, "DeletedObjects")
+
+        base.append(root)
+
+        #print(etree.tounicode(base_el, pretty_print=True))
+
+        self._root_obj = objectify.fromstring(etree.tounicode(base), objectify.makeparser())
+
 
     @staticmethod
     def get_active_item():
@@ -143,7 +159,7 @@ class KeePass:
             if getattr(KeePass.get_active_item(), 'really_delete', False):
                 message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                         InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
-            else:
+            elif not self.search_group:
                 message_buttons.append(second_row)
             InlineKeyboardMarkup(message_buttons)
         else:
@@ -152,9 +168,9 @@ class KeePass:
                 if getattr(KeePass.get_active_item(), 'really_delete', False):
                     message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                             InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
-                else:
+                elif not self.search_group:
                     message_buttons.append(second_row)
-            else:
+            elif not self.search_group:
                 message_buttons.append(second_row)
 
 
@@ -249,7 +265,7 @@ class KeePass:
                 if word.lower() in item.name.lower():
                     finded_items.append(item)
 
-        __inner_find(self)
+        __inner_find(self.root_group)
 
         return finded_items
 
@@ -267,18 +283,23 @@ class KeePass:
                         return finded_elem
                 if item.uuid == word:
                     return item
-
-        return __inner_find(self.root_group)
+        if self.search_group:
+            return __inner_find(self.search_group)
+        else:
+            return __inner_find(self.root_group)
 
     def search(self, word):
         finded_items = self.search_item(word)
 
-        temp_group = KeeGroup(self, self, None, fake=True, items=finded_items)
+        self.search_group = KeeGroup(self, KeePass.get_active_item(), name="Search")
+        for item in finded_items:
+            temp_entry = KeeEntry(self, self.search_group)
+            for string in item.items:
+                temp_entry.append(string)
 
-        while KeePass.get_active_item() != self:
-            KeePass.get_active_item().deactivate()
+            self.search_group.append(temp_entry)
 
-        temp_group.activate()
+        self.search_group.activate()
 
     def start_add_edit(self, type=None, obj=None):
         self.add_edit_state = AddEditState(type, obj)
@@ -332,21 +353,20 @@ class KeePass:
         self.add_edit_state = None
 
     def update_kdb_in_db(self):
-        self.kdb.object_root = self._root_obj
+        self.generate_root()
+        self.kdb.obj_root = self._root_obj
         user = self.get_user()
         # print(etree.tounicode(self._root_obj, pretty_print=True))
 
-        """Write to new file"""
-        with open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'wb') as output:
-            self.kdb.write_to(output)
+        """Write to new memory file"""
+        output = BytesIO()
+        self.kdb.write_to(output)
+        output.name = self.root_group.name + '.kdbx'
+        output.seek(0)
 
         """Saving to database"""
-        with open(TEMP_FOLDER + '/' + str(user.username) + '.kdbx', 'rb+') as file:
-            user.file = file.read()
-            user.save()
-
-        """Removing downloaded file"""
-        os.remove(TEMP_FOLDER + '/' + str(user.username) + '.kdbx')
+        user.file = output.read()
+        user.save()
 
 
 class AddEditState:
@@ -475,31 +495,6 @@ class KeeGroup(BaseKeePass):
         if parent is None:
             parent = self
         super().__init__(root, parent)
-        # if fake:
-        #     self.type = ItemType.GROUP
-        #     self.name = name
-        #     self.uuid = None
-        #     self.notes = None
-        #     self.icon_id = None
-        #     self.items = items
-        #     for item in self.items:
-        #         item._parent = self
-        #         item._root = root
-        #
-        #     # init group object
-        #     parser = objectify.makeparser()
-        #     self._group_obj = objectify.fromstring(etree.tounicode(self.get_xml_element()), parser)
-        #
-        # else:
-        #     self.type = ItemType.GROUP
-        #     self._group_obj = group_obj
-        #     self.name = group_obj.Name.text
-        #     self.uuid = group_obj.UUID.text
-        #     self.notes = group_obj.Notes.text
-        #     self.icon_id = int(group_obj.IconID.text)
-        #     self.items = []
-        #     self._init_entries()
-        #     self._init_groups()
         if not uuid:
             self.uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
         else:
@@ -529,24 +524,20 @@ class KeeGroup(BaseKeePass):
         self.items.append(item)
         self.size += 1
 
-    @classmethod
-    def get_xml_element(cls, name, icon_id, uuid=""):
-        if not uuid:
-            uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
-
+    def get_xml_element(self):
         group = Element("Group")
 
         uuid_el = SubElement(group, 'UUID')
-        uuid_el.text = uuid
+        uuid_el.text = self.uuid
 
         name_el = SubElement(group, 'Name')
-        name_el.text = name
+        name_el.text = self.name
 
         notes = SubElement(group, 'Notes')
         notes.text = ""
 
         iconID = SubElement(group, 'IconID')
-        iconID.text = str(icon_id)
+        iconID.text = str(self.icon_id)
 
         # ------Times
         times = SubElement(group, "Times")
@@ -591,9 +582,10 @@ class KeeGroup(BaseKeePass):
         last_top_vis_entry = SubElement(group, "LastTopVisibleEntry")
         last_top_vis_entry.text = "AAAAAAAAAAAAAAAAAAAAAA=="
 
-        parser = objectify.makeparser()
-        group_obj = objectify.fromstring(etree.tounicode(group), parser)
-        return group_obj
+        for item in self.items:
+            group.append(item.get_xml_element())
+
+        return group
 
     def delete(self):
         self.deactivate()
@@ -663,18 +655,14 @@ class KeeEntry(BaseKeePass):
         self._set_password()
         self.get_parent().refresh_items()
 
-    @classmethod
-    def get_xml_element(cls, icon_id, strings, uuid=""):
-        if not uuid:
-            uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
-
+    def get_xml_element(self):
         entry = Element("Entry")
 
         uuid_el = SubElement(entry, 'UUID')
-        uuid_el.text = uuid
+        uuid_el.text = self.uuid
 
         iconID = SubElement(entry, 'IconID')
-        iconID.text = str(icon_id)
+        iconID.text = str(self.icon_id)
 
         SubElement(entry, "ForegroundColor")
         SubElement(entry, "BackgroundColor")
@@ -709,8 +697,8 @@ class KeeEntry(BaseKeePass):
         # Times-------------------
 
         # Strings ----------
-        for key, value in strings:
-            entry.append(EntryString.get_xml_element(key, value))
+        for item in self.items:
+            entry.append(item.get_xml_element())
 
         # Autotype -----------
         autotype = SubElement(entry, "AutoType")
@@ -741,15 +729,14 @@ class EntryString(BaseKeePass):
         if key == "Title":
             self._parent.name = value
 
-    @classmethod
-    def get_xml_element(cls, key, value):
+    def get_xml_element(self):
         string = Element('String')
 
         key_el = SubElement(string, 'Key')
-        key_el.text = key
+        key_el.text = self.key
 
         value_el = SubElement(string, 'Value')
-        value_el.text = value
+        value_el.text = self.value
 
         return string
 
