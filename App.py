@@ -94,9 +94,6 @@ def database_add(bot, update):
     file.download(out=input)
     input.seek(0)
 
-    # f = bot.get_file(file_id)
-    # f.download(TEMP_FOLDER + '/' + file_id + '.kdbx')
-
     """Saving to database"""
     user = User.get_or_none(username=update.message.from_user.name)
     user.file = input.read()
