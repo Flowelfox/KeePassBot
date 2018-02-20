@@ -85,23 +85,22 @@ def search(bot, update):
 
 
 def database_add(bot, update):
-    """Creating folder"""
-    if not os.path.exists(TEMP_FOLDER):
-        os.mkdir(TEMP_FOLDER)
+    """Add file to database for user"""
 
-    """Downloading file"""
+    """Write to new memory file"""
+    input = BytesIO()
     file_id = update.message.document.file_id
-    f = bot.get_file(file_id)
-    f.download(TEMP_FOLDER + '/' + file_id + '.kdbx')
+    file = bot.get_file(file_id)
+    file.download(out=input)
+    input.seek(0)
+
+    # f = bot.get_file(file_id)
+    # f.download(TEMP_FOLDER + '/' + file_id + '.kdbx')
 
     """Saving to database"""
     user = User.get_or_none(username=update.message.from_user.name)
-    with open(TEMP_FOLDER + '/' + file_id + '.kdbx', 'rb+') as file:
-        user.file = file.read()
-        user.save()
-
-    """Removing downloaded file"""
-    os.remove(TEMP_FOLDER + '/' + file_id + '.kdbx')
+    user.file = input.read()
+    user.save()
 
     markup = InlineKeyboardMarkup([[InlineKeyboardButton(text="Yes", callback_data="YesKey"),
                                     InlineKeyboardButton(text="No", callback_data="NoKey")]])
