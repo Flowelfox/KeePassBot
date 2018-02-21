@@ -194,7 +194,7 @@ class KeePass:
                 self.root_group.activate()
 
         except IOError:
-            raise IOError("Master key or key-file wrong")
+            raise IOError("Master password or key-file wrong")
         except UnicodeDecodeError:
             raise IOError("Critical error, please report to administrator.")
 
@@ -446,7 +446,7 @@ class AddEditState:
         self.set_cur_field(prev_field)
 
     def __generate_text(self):
-        message_text = "_______Create New " + str(self.type) + "_______" + new_line
+        message_text = "_______" + str(self.type) + "_______" + new_line
         for field in self.fields.keys():
             if self.current_field == field:
                 message_text += f"{arrow_right_emo}"
