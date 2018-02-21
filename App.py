@@ -184,8 +184,7 @@ def show_group(bot, update):
     try:
         keepass = opened_databases[chat.username]
     except KeyError as e:
-        logging.error("Key error: " + str(e))
-        bot.answer_callback_query(update.callback_query.id)
+        pass
 
     if data == "Nothing":
         bot.answer_callback_query(update.callback_query.id)
