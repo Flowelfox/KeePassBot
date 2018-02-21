@@ -1,7 +1,7 @@
 import base64
 import datetime
 import math
-import uuid as uuidGenerator
+import uuid as uuid_generator
 from abc import ABC
 from enum import Enum
 from io import BytesIO
@@ -83,6 +83,7 @@ class KeePass:
         self.root_group = None
         self.search_group = None
         self.user = None
+        self.kdb = None
 
     def __str__(self):
         if not self.opened:
@@ -101,14 +102,9 @@ class KeePass:
 
         base.append(root)
 
-        #print(etree.tounicode(base_el, pretty_print=True))
+        # print(etree.tounicode(base_el, pretty_print=True))
 
         self._root_obj = objectify.fromstring(etree.tounicode(base), objectify.makeparser())
-
-
-    @staticmethod
-    def get_active_item():
-        return KeePass.active_item
 
     def get_user(self):
         self.user = User.get_or_none(username=self.user.username)
@@ -118,8 +114,8 @@ class KeePass:
         if not self.opened:
             raise IOError("Databse not opened")
 
-        def inner_init(root_group_obj, cur_group):
-            for item in root_group_obj.findall('Group') + root_group_obj.findall('Entry'):
+        def inner_init(parent_group_obj, cur_group):
+            for item in parent_group_obj.findall('Group') + parent_group_obj.findall('Entry'):
                 if item.tag == str(ItemType.GROUP):
                     new_group = KeeGroup(root=self, parent=cur_group, name=item.Name.text, notes=item.Notes.text, icond_id=item.IconID.text, uuid=item.UUID.text)
                     cur_group.append(new_group)
@@ -139,24 +135,22 @@ class KeePass:
         if not self.opened:
             raise IOError("Databse not opened")
 
-        message_buttons = []
-        message_buttons.append(
-            [InlineKeyboardButton(text=arrow_left_emo, callback_data="Left"),
-             InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
-             InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
-             InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")])
-        if KeePass.get_active_item() == self.root_group:
+        message_buttons = [[InlineKeyboardButton(text=arrow_left_emo, callback_data="Left"),
+                            InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
+                            InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
+                            InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")]]
+        if KeePass.active_item == self.root_group:
             delete_but = InlineKeyboardButton(text=black_x_emo, callback_data="Nothing")
         else:
             delete_but = InlineKeyboardButton(text=x_emo, callback_data="Delete")
         second_row = \
-            [InlineKeyboardButton(text=pencil_emo, callback_data=f"Edit_{KeePass.get_active_item().uuid}"),
+            [InlineKeyboardButton(text=pencil_emo, callback_data=f"Edit_{KeePass.active_item.uuid}"),
              InlineKeyboardButton(text=repeat_emo, callback_data="Resend"),
              InlineKeyboardButton(text=arrow_down_emo, callback_data="Download"),
              delete_but]
 
-        if KeePass.get_active_item() and KeePass.get_active_item().type == ItemType.ENTRY:
-            if getattr(KeePass.get_active_item(), 'really_delete', False):
+        if KeePass.active_item and KeePass.active_item.type == ItemType.ENTRY:
+            if getattr(KeePass.active_item, 'really_delete', False):
                 message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                         InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
             elif not self.search_group:
@@ -164,8 +158,8 @@ class KeePass:
             InlineKeyboardMarkup(message_buttons)
         else:
             i = 0
-            if KeePass.get_active_item() != self.root_group:
-                if getattr(KeePass.get_active_item(), 'really_delete', False):
+            if KeePass.active_item != self.root_group:
+                if getattr(KeePass.active_item, 'really_delete', False):
                     message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                             InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
                 elif not self.search_group:
@@ -173,10 +167,8 @@ class KeePass:
             elif not self.search_group:
                 message_buttons.append(second_row)
 
-
-
-            for item in KeePass.get_active_item().items:
-                if KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.get_active_item().page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
+            for item in KeePass.active_item.items:
+                if KeePass.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
                     message_buttons.append([InlineKeyboardButton(text=str(item), callback_data=item.uuid)])
                 i += 1
 
@@ -211,7 +203,7 @@ class KeePass:
             raise IOError("Database not opened")
 
         message_text = ""
-        active_item = KeePass.get_active_item()
+        active_item = KeePass.active_item
 
         if active_item.type == ItemType.ENTRY:
             message_text += "_______" + key_emo + active_item.name + "_______" + new_line
@@ -283,6 +275,7 @@ class KeePass:
                         return finded_elem
                 if item.uuid == word:
                     return item
+
         if self.search_group:
             return __inner_find(self.search_group)
         else:
@@ -291,7 +284,7 @@ class KeePass:
     def search(self, word):
         finded_items = self.search_item(word)
 
-        self.search_group = KeeGroup(self, KeePass.get_active_item(), name="Search")
+        self.search_group = KeeGroup(self, KeePass.active_item, name="Search")
         for item in finded_items:
             temp_entry = KeeEntry(self, self.search_group)
             for string in item.items:
@@ -301,8 +294,8 @@ class KeePass:
 
         self.search_group.activate()
 
-    def start_add_edit(self, type=None, obj=None):
-        self.add_edit_state = AddEditState(type, obj)
+    def start_add_edit(self, item_type=None, obj=None):
+        self.add_edit_state = AddEditState(item_type, obj)
         return self.add_edit_state.get_message()
 
     def finish_add_edit(self):
@@ -310,7 +303,7 @@ class KeePass:
             process_type = self.add_edit_state.process_type
 
             """Get parent group"""
-            group_item = KeePass.get_active_item()
+            group_item = KeePass.active_item
             while not group_item.type == ItemType.GROUP:
                 group_item = group_item.get_parent()
 
@@ -324,7 +317,7 @@ class KeePass:
                     group_item.append(entry)
 
                 elif process_type == ProcessType.EDIT:
-                    entry = KeePass.get_active_item()
+                    entry = KeePass.active_item
                     for key, value in self.add_edit_state.get_rawstrings():
                         entry.update_item(key, value)
 
@@ -339,7 +332,7 @@ class KeePass:
                     group_item.append(group)
 
                 elif process_type == ProcessType.EDIT:
-                    group = KeePass.get_active_item()
+                    group = KeePass.active_item
                     for key, value in self.add_edit_state.get_rawstrings():
                         if key == 'Name':
                             group.name = value
@@ -365,21 +358,21 @@ class KeePass:
         output.seek(0)
 
         """Saving to database"""
-        user.file = output.read()
+        user.file = output.getvalue()
         user.save()
 
 
 class AddEditState:
-    def __init__(self, type=None, obj=None):
+    def __init__(self, item_type=None, obj=None):
         # Entry or Group
-        if type != ItemType.ENTRY and type != ItemType.GROUP:
+        if item_type != ItemType.ENTRY and item_type != ItemType.GROUP:
             if obj is not None:
                 self.type = obj.type
                 self.process_type = ProcessType.EDIT
             else:
                 raise KeyError("Choises are (Entry, Group)")
         else:
-            self.type = type
+            self.type = item_type
             self.process_type = ProcessType.ADD
 
         if self.type == ItemType.ENTRY:
@@ -469,13 +462,10 @@ class AddEditState:
         return message_text
 
     def __generate_keyboard(self):
-        message_buttons = []
-
-        message_buttons.append(
-            [InlineKeyboardButton(text=arrow_left_emo, callback_data="create_Left"),
-             InlineKeyboardButton(text=arrow_up_emo, callback_data="create_Back"),
-             InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
-             InlineKeyboardButton(text=arrow_right_emo, callback_data="create_Right")])
+        message_buttons = [[InlineKeyboardButton(text=arrow_left_emo, callback_data="create_Left"),
+                            InlineKeyboardButton(text=arrow_up_emo, callback_data="create_Back"),
+                            InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
+                            InlineKeyboardButton(text=arrow_right_emo, callback_data="create_Right")]]
 
         for field in self.fields.keys():
             if field == "Password":
@@ -496,7 +486,7 @@ class KeeGroup(BaseKeePass):
             parent = self
         super().__init__(root, parent)
         if not uuid:
-            self.uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
+            self.uuid = (base64.b64encode(uuid_generator.uuid4().bytes)).decode("utf-8")
         else:
             self.uuid = uuid
 
@@ -536,8 +526,8 @@ class KeeGroup(BaseKeePass):
         notes = SubElement(group, 'Notes')
         notes.text = ""
 
-        iconID = SubElement(group, 'IconID')
-        iconID.text = str(self.icon_id)
+        icon_id = SubElement(group, 'IconID')
+        icon_id.text = str(self.icon_id)
 
         # ------Times
         times = SubElement(group, "Times")
@@ -577,7 +567,7 @@ class KeeGroup(BaseKeePass):
 
         # Searching -----------
         enable_searching = SubElement(group, "EnableSearching")
-        enable_at.text = "null"
+        enable_searching.text = "null"
 
         last_top_vis_entry = SubElement(group, "LastTopVisibleEntry")
         last_top_vis_entry.text = "AAAAAAAAAAAAAAAAAAAAAA=="
@@ -598,7 +588,7 @@ class KeeEntry(BaseKeePass):
     def __init__(self, root, parent, icond_id='0', uuid=""):
         super().__init__(root, parent)
         if not uuid:
-            self.uuid = (base64.b64encode(uuidGenerator.uuid4().bytes)).decode("utf-8")
+            self.uuid = (base64.b64encode(uuid_generator.uuid4().bytes)).decode("utf-8")
         else:
             self.uuid = uuid
         self.type = ItemType.ENTRY
@@ -619,19 +609,6 @@ class KeeEntry(BaseKeePass):
         if item.key == "Title":
             self.name = item.value
 
-    def _init_strings(self):
-        strings = self._entry_obj.findall('String')
-        self.strings = []
-        self.size = 0
-        for string in strings:
-            self.strings.append(EntryString(string.Key.text, string.Value.text))
-            self.size += 1
-
-    def _set_password(self):
-        for string in self.strings:
-            if string.key == "Password":
-                self.password = string.value
-
     def update_item(self, key, value):
         if key is None:
             return
@@ -646,23 +623,14 @@ class KeeEntry(BaseKeePass):
             if item.key == key:
                 return item
 
-    def update(self, entry_obj):
-        parser = objectify.makeparser()
-        entry_obj = objectify.fromstring(etree.tounicode(entry_obj), parser)
-
-        self._entry_obj = entry_obj
-        self._init_strings()
-        self._set_password()
-        self.get_parent().refresh_items()
-
     def get_xml_element(self):
         entry = Element("Entry")
 
         uuid_el = SubElement(entry, 'UUID')
         uuid_el.text = self.uuid
 
-        iconID = SubElement(entry, 'IconID')
-        iconID.text = str(self.icon_id)
+        icon_id = SubElement(entry, 'IconID')
+        icon_id.text = str(self.icon_id)
 
         SubElement(entry, "ForegroundColor")
         SubElement(entry, "BackgroundColor")
@@ -708,7 +676,7 @@ class KeeEntry(BaseKeePass):
         at_data_transfer_obfuscation = SubElement(autotype, "DataTransferObfuscation")
         at_data_transfer_obfuscation.text = "0"
 
-        history = SubElement(entry, "History")
+        SubElement(entry, "History")
 
         return entry
 

@@ -26,9 +26,6 @@ repeat_emo = emojize(":repeat:", use_aliases=True)
 
 new_line = '\n'
 
-opened_databases = {}
-
-
 try:
     from local_settings import *
 except ImportError:
