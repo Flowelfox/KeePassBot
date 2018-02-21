@@ -348,8 +348,8 @@ class KeePass:
     def update_kdb_in_db(self):
         self.generate_root()
         self.kdb.obj_root = self._root_obj
-        user = self.get_user()
-        # print(etree.tounicode(self._root_obj, pretty_print=True))
+
+        #print(etree.tounicode(self._root_obj, pretty_print=True))
 
         """Write to new memory file"""
         output = BytesIO()
@@ -358,6 +358,7 @@ class KeePass:
         output.seek(0)
 
         """Saving to database"""
+        user = self.get_user()
         user.file = output.getvalue()
         user.save()
 
