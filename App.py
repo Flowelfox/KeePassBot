@@ -186,7 +186,6 @@ def show_group(bot, update):
     except KeyError as e:
         logging.error("Key error: " + str(e))
         bot.answer_callback_query(update.callback_query.id)
-        return
 
     if data == "Nothing":
         bot.answer_callback_query(update.callback_query.id)
