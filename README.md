@@ -14,7 +14,7 @@ This program will facilitate access to your passwords, speed up access to them.
 * Work anywhere where your telegram installed
 * You can view edit and create items
 * You can download edited database at anytime
-* Very user-friendly interface
+* User-friendly interface
 
  #### Disadvantages:
 * You need internet to access your passwords  
