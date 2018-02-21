@@ -7,7 +7,7 @@ Now KeePass is available in the telegram.
 
 This program will facilitate access to your passwords, speed up access to them.
 
- #### TODO
+ #### TODO:
 * Add possibility to create .kdbx files in bot
 
  #### Advantages:
