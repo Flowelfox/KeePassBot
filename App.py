@@ -395,7 +395,6 @@ def create_query(bot, update):
     data = update.callback_query.data.replace("create_", "")
     chat = bot.getChat(update.callback_query.message.chat_id)
     chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
     keepass = opened_databases[chat.username]
 
     if data == "done":
@@ -407,6 +406,7 @@ def create_query(bot, update):
 
         keepass.finish_add_edit()
 
+        user = User.get_or_none(username=chat.username)
         user.create_state = False
         user.save()
 
@@ -419,6 +419,7 @@ def create_query(bot, update):
         return
 
     elif data == "Back":
+        user = User.get_or_none(username=chat.username)
         user.create_state = False
         user.save()
 
@@ -443,6 +444,7 @@ def create_query(bot, update):
     else:
         keepass.add_edit_state.set_cur_field(data)
 
+    user = User.get_or_none(username=chat.username)
     message_text, message_markup = keepass.add_edit_state.get_message()
     try:
         bot.edit_message_text(chat_id=chat.id,
