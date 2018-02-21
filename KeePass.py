@@ -21,6 +21,7 @@ class ItemType(Enum):
     ENTRY = "Entry"
     STRING = "String"
     MANAGER = "Manager"
+    AUTOTYPE = "AutoType"
 
     def __str__(self):
         return self.value
@@ -121,7 +122,12 @@ class KeePass:
                     cur_group.append(new_group)
                     inner_init(item, new_group)
                 if item.tag == str(ItemType.ENTRY):
-                    new_entry = KeeEntry(root=self, parent=cur_group, icond_id=item.IconID.text, uuid=item.UUID.text)
+                    asoc = None
+                    if hasattr(item.AutoType, 'Association'):
+                        asoc = {'window': item.AutoType.Association.Window.text,
+                                'key_sec': item.AutoType.Association.KeystrokeSequence.text}
+                    autotype = AutoType(enabled=item.AutoType.Enabled.text,dto=item.AutoType.DataTransferObfuscation.text, association=asoc)
+                    new_entry = KeeEntry(root=self, parent=cur_group, icond_id=item.IconID.text, uuid=item.UUID.text, autotype=autotype)
                     for string in item.findall('String'):
                         new_entry.append(EntryString(root=self, parent=new_entry, key=string.Key.text, value=string.Value.text))
                     cur_group.append(new_entry)
@@ -311,7 +317,7 @@ class KeePass:
             if self.add_edit_state.type == ItemType.ENTRY:
 
                 if process_type == ProcessType.ADD:
-                    entry = KeeEntry(root=self, parent=group_item)
+                    entry = KeeEntry(root=self, parent=group_item, autotype=AutoType("True"))
                     for key, value in self.add_edit_state.get_rawstrings():
                         entry.append(EntryString(root=self, parent=entry, key=key, value=value))
                     group_item.append(entry)
@@ -349,7 +355,7 @@ class KeePass:
         self.generate_root()
         self.kdb.obj_root = self._root_obj
 
-        #print(etree.tounicode(self._root_obj, pretty_print=True))
+        print(etree.tounicode(self._root_obj, pretty_print=True))
 
         """Write to new memory file"""
         output = BytesIO()
@@ -586,7 +592,7 @@ class KeeGroup(BaseKeePass):
 
 class KeeEntry(BaseKeePass):
 
-    def __init__(self, root, parent, icond_id='0', uuid=""):
+    def __init__(self, root, parent, autotype, icond_id='0', uuid=""):
         super().__init__(root, parent)
         if not uuid:
             self.uuid = (base64.b64encode(uuid_generator.uuid4().bytes)).decode("utf-8")
@@ -597,6 +603,7 @@ class KeeEntry(BaseKeePass):
         self.items = []
         self.size = 0
         self.name = ""
+        self.autotype = autotype
 
     def __str__(self):
         return self.name
@@ -670,12 +677,7 @@ class KeeEntry(BaseKeePass):
             entry.append(item.get_xml_element())
 
         # Autotype -----------
-        autotype = SubElement(entry, "AutoType")
-        at_enabled = SubElement(autotype, "Enabled")
-        at_enabled.text = "True"
-
-        at_data_transfer_obfuscation = SubElement(autotype, "DataTransferObfuscation")
-        at_data_transfer_obfuscation.text = "0"
+        entry.append(self.autotype.get_xml_element())
 
         SubElement(entry, "History")
 
@@ -719,3 +721,33 @@ class EntryString(BaseKeePass):
         if hasattr(self, 'key') and self.key == "Title":
             self._parent.name = value
         super().__setattr__(name, value)
+
+class AutoType():
+
+    def __init__(self, enabled, dto='0', association=None):
+        self.enabled = enabled
+        self.dto = dto
+        self.association = association
+        self.type = ItemType.AUTOTYPE
+
+
+    def get_xml_element(self):
+        # Autotype -----------
+        autotype = Element("AutoType")
+        at_enabled = SubElement(autotype, "Enabled")
+        at_enabled.text = self.enabled
+
+        at_data_transfer_obfuscation = SubElement(autotype, "DataTransferObfuscation")
+        at_data_transfer_obfuscation.text = self.dto
+
+        if self.association:
+            asoc = SubElement(autotype, "Association")
+
+            window = SubElement(asoc, "Window")
+            window.text = self.association['window']
+
+            key_sec = SubElement(asoc, "KeystrokeSequence")
+            key_sec.text = self.association['key_sec']
+
+        return autotype
+
