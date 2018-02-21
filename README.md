@@ -6,6 +6,9 @@ Bot for telegram which can read .kdbx files.
 Now KeePass is available in the telegram.
 
 This program will facilitate access to your passwords, speed up access to them.
+ ####TODO
+* Add possibility to create .kdbx files in bot
+
 
  #### Advantages:
 * Work anywhere where your telegram installed
