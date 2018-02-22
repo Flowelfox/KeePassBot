@@ -21,12 +21,6 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 opened_databases = {}
 
 
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    for i in range(0, len(l), n):
-        yield l[i:i + n]
-
-
 def set_chat_id(fun):
     def wrapper(*args, **kwargs):
         update = args[1]
