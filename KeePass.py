@@ -42,14 +42,12 @@ class BaseKeePass(ABC):
         self.type = None
 
     def next_page(self):
-
         if self.page < self.size / NUMBER_OF_ENTRIES_ON_PAGE:
             self.page += 1
         else:
             self.page = 1
 
     def previous_page(self):
-
         if self.page > 1:
             self.page -= 1
         else:

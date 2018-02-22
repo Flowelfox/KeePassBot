@@ -181,7 +181,7 @@ def show_group(bot, update):
         pass
 
     if data == "Nothing":
-        bot.answer_callback_query(update.callback_query.id)
+        bot.answer_callback_query(update.callback_query.id, text="Cannot delete root group", show_alert=False)
         return
     if data == "Resend":
         # delete previous
@@ -263,10 +263,11 @@ def show_group(bot, update):
         return
 
     if data == "Back":
-        if KeePass.active_item:
+        if KeePass.active_item != KeePass.active_item.get_root().root_group:
             KeePass.active_item.deactivate()
-        else:
             bot.answer_callback_query(update.callback_query.id)
+        else:
+            bot.answer_callback_query(update.callback_query.id, text="Already in root group", show_alert=False)
             return
 
     if data.startswith("Edit_"):
