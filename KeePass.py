@@ -59,6 +59,8 @@ class BaseKeePass(ABC):
         KeePass.active_item = self
 
     def deactivate(self):
+        if KeePass.active_item == self._root.search_group:
+            self._root.search_group = None
         KeePass.active_item = self._parent
 
     def get_root(self):
@@ -292,7 +294,7 @@ class KeePass:
 
         self.search_group = KeeGroup(self, KeePass.active_item, name="Search")
         for item in finded_items:
-            temp_entry = KeeEntry(self, self.search_group)
+            temp_entry = KeeEntry(self, self.search_group, AutoType(True))
             for string in item.items:
                 temp_entry.append(string)
 
