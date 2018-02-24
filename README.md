@@ -1,5 +1,6 @@
 # KeePassBot
-Telegram: [@keepass_bot](https://storebot.me/mybots?bot=keepass_bot)
+Telegram: [@keepass_bot](http://telegram.me/keepass_bot)   
+Storebot: [@keepass_bot](https://storebot.me/mybots?bot=keepass_bot)
 
 Bot for telegram which can read .kdbx files.
 
