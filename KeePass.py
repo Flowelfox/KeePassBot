@@ -108,7 +108,7 @@ class KeePass:
         self._root_obj = objectify.fromstring(etree.tounicode(base), objectify.makeparser())
 
     def get_user(self):
-        self.user = User.get_or_none(username=self.user.username)
+        self.user = User.get_or_none(chat_id=self.user.chat_id)
         return self.user
 
     def _init_root_group(self):
@@ -183,9 +183,9 @@ class KeePass:
     def close(self):
         self.kdb.close()
 
-    def open(self, username, password=None, keyfile_path=None):
+    def open(self, chat_id, password=None, keyfile_path=None):
 
-        self.user = User.get_or_none(username=username)
+        self.user = User.get_or_none(chat_id=chat_id)
 
         try:
             with libkeepass.open(filename=self.path, password=password, keyfile=keyfile_path, unprotect=False) as kdb:
@@ -292,11 +292,12 @@ class KeePass:
 
         self.search_group = KeeGroup(self, KeePass.active_item, name="Search")
         for item in finded_items:
-            temp_entry = KeeEntry(self, self.search_group, AutoType(True))
-            for string in item.items:
-                temp_entry.append(string)
+            if isinstance(item, KeeEntry):
+                temp_entry = KeeEntry(self, self.search_group, AutoType(True))
+                for string in item.items:
+                    temp_entry.append(string)
 
-            self.search_group.append(temp_entry)
+                self.search_group.append(temp_entry)
 
         self.search_group.activate()
 
@@ -355,7 +356,7 @@ class KeePass:
         self.generate_root()
         self.kdb.obj_root = self._root_obj
 
-        print(etree.tounicode(self._root_obj, pretty_print=True))
+        #print(etree.tounicode(self._root_obj, pretty_print=True))
 
         """Write to new memory file"""
         output = BytesIO()

@@ -25,8 +25,7 @@ def set_chat_id(fun):
     def wrapper(*args, **kwargs):
         update = args[1]
         chat = t_bot.getChat(update.message.chat_id)
-        chat.username = f'@{chat.username}'
-        user = User.get_or_none(username=chat.username)
+        user = user = User.get_or_none(chat_id=chat.id)
         if user.chat_id == 0:
             user.chat_id = chat.id
             user.save()
@@ -38,25 +37,23 @@ def set_chat_id(fun):
 # FUNCTIONS
 def start(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
     if not user:
         user = User(username=chat.username, join_date=datetime.datetime.now(), chat_id=chat.id)
         user.save()
-        bot.send_message(chat_id=chat.id, text="Hi %s, now you registered." % user.username)
+        bot.send_message(chat_id=chat.id, text="Hi, now you registered.")
         bot.send_message(chat_id=chat.id, text="If you want remove all information about you send me \"/stop\".")
         bot.send_message(chat_id=chat.id, text="Please send me database file for start")
     else:
-        bot.send_message(chat_id=chat.id, text="Hi again, %s, you already registered." % user.username)
+        bot.send_message(chat_id=chat.id, text="Hi again, you already registered.")
         bot.send_message(chat_id=chat.id, text="If you want remove all information about you send me \"/stop\".")
 
 
 def stop(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
     if user:
-        User.delete().where(User.username == chat.username).execute()
+        User.delete().where(User.chat_id == chat.id).execute()
         bot.send_message(chat_id=chat.id, text="Now all information about you, %s, are deleted.")
         bot.send_message(chat_id=chat.id, text="Have a good day.")
     else:
@@ -65,10 +62,9 @@ def stop(bot, update):
 
 def search(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
 
-    keepass = opened_databases[chat.username]
+    keepass = opened_databases[chat.id]
 
     keepass.search(update.message.text.replace("/search ", ""))
 
@@ -83,8 +79,7 @@ def search(bot, update):
 def database_add(bot, update):
     """Add file to database for user"""
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
 
     """Write to new memory file"""
     input_f = BytesIO()
@@ -108,8 +103,7 @@ def database_not_exist(bot, update):
 
 def not_opened(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
 
     """Getting file-key"""
     if user.key_file_needed and not os.path.exists(TEMP_FOLDER + '/' + update.message.from_user.name + '.key'):
@@ -132,14 +126,14 @@ def not_opened(bot, update):
     keepass = KeePass(TEMP_FOLDER + '/' + update.message.from_user.name + '.kdbx')
     try:
         if user.password_needed and user.key_file_needed:
-            keepass.open(username=chat.username, password=update.message.text, keyfile_path=TEMP_FOLDER + '/' + update.message.from_user.name + '.key')
+            keepass.open(chat_id=chat.id, password=update.message.text, keyfile_path=TEMP_FOLDER + '/' + update.message.from_user.name + '.key')
         elif user.password_needed and not user.key_file_needed:
-            keepass.open(username=chat.username, password=update.message.text)
+            keepass.open(chat_id=chat.id, password=update.message.text)
         elif not user.password_needed and user.key_file_needed:
-            keepass.open(username=chat.username, keyfile_path=TEMP_FOLDER + '/' + update.message.from_user.name + '.key')
+            keepass.open(chat_id=chat.id, keyfile_path=TEMP_FOLDER + '/' + update.message.from_user.name + '.key')
 
         global opened_databases
-        opened_databases.update({update.message.from_user.name: keepass})
+        opened_databases.update({update.message.chat_id: keepass})
         message_text, message_markup = keepass.get_message()
         interface_message = bot.send_message(chat_id=chat.id, text=message_text,
                                              reply_markup=message_markup)
@@ -172,11 +166,10 @@ def not_opened(bot, update):
 def show_group(bot, update):
     data = update.callback_query.data
     chat = bot.getChat(update.callback_query.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
 
     try:
-        keepass = opened_databases[chat.username]
+        keepass = opened_databases[chat.id]
     except KeyError as e:
         pass
 
@@ -248,7 +241,7 @@ def show_group(bot, update):
         return
 
     if data == "Lock":
-        close_proces(chat.username, chat.id)
+        close_proces(chat.id)
 
         bot.answer_callback_query(update.callback_query.id)
         return
@@ -357,9 +350,8 @@ def show_group(bot, update):
 def create(bot, update):
     args = update.message.text.replace('/create ', '')
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
-    keepass = opened_databases[chat.username]
+    user = User.get_or_none(chat_id=chat.id)
+    keepass = opened_databases[chat.id]
 
     if args.lower() in "group":
         message_text, message_markup = keepass.start_add_edit(ItemType.GROUP)
@@ -389,8 +381,7 @@ def create(bot, update):
 def create_query(bot, update):
     data = update.callback_query.data.replace("create_", "")
     chat = bot.getChat(update.callback_query.message.chat_id)
-    chat.username = f'@{chat.username}'
-    keepass = opened_databases[chat.username]
+    keepass = opened_databases[chat.id]
 
     if data == "done":
         for field in keepass.add_edit_state.req_fields:
@@ -401,7 +392,7 @@ def create_query(bot, update):
 
         keepass.finish_add_edit()
 
-        user = User.get_or_none(username=chat.username)
+        user = User.get_or_none(chat_id=chat.id)
         user.create_state = False
         user.save()
 
@@ -414,7 +405,7 @@ def create_query(bot, update):
         return
 
     elif data == "Back":
-        user = User.get_or_none(username=chat.username)
+        user = User.get_or_none(chat_id=chat.id)
         user.create_state = False
         user.save()
 
@@ -439,7 +430,7 @@ def create_query(bot, update):
     else:
         keepass.add_edit_state.set_cur_field(data)
 
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
     message_text, message_markup = keepass.add_edit_state.get_message()
     try:
         bot.edit_message_text(chat_id=chat.id,
@@ -456,9 +447,8 @@ def create_query(bot, update):
 
 def message_in_create(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
-    keepass = opened_databases[chat.username]
+    user = User.get_or_none(chat_id=chat.id)
+    keepass = opened_databases[chat.id]
 
     # length check
     if len(update.message.text) > 40:
@@ -485,18 +475,17 @@ def message_in_create(bot, update):
 @set_chat_id
 def close(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    close_proces(chat.username, chat.id)
+    close_proces(chat.id)
 
 
-def close_proces(username, chat_id):
+def close_proces(chat_id):
     try:
-        opened_databases[username].close()
-        del opened_databases[username]
+        opened_databases[chat_id].close()
+        del opened_databases[chat_id]
     except KeyError as e:
         logging.error("Key error: " + str(e))
 
-    user = User.get_or_none(username=username)
+    user = User.get_or_none(chat_id=chat_id)
     user.is_opened = False
     user.save()
     try:
@@ -517,8 +506,7 @@ def close_proces(username, chat_id):
 
 def delete_database(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
     if user.is_opened:
         bot.send_message(chat_id=chat.id, text="Your database in use, first close it with \"/close\"")
     else:
@@ -529,8 +517,7 @@ def delete_database(bot, update):
 
 def toogle_notifications(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
+    user = User.get_or_none(chat_id=chat.id)
     user.notification = not user.notification
     user.save()
     if user.notification:
@@ -541,9 +528,8 @@ def toogle_notifications(bot, update):
 
 def resend_interface(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
-    keepass = opened_databases[chat.username]
+    user = User.get_or_none(chat_id=chat.id)
+    keepass = opened_databases[chat.id]
 
     # delete previous
     try:
@@ -561,9 +547,8 @@ def resend_interface(bot, update):
 
 def get_database(bot, update):
     chat = bot.getChat(update.message.chat_id)
-    chat.username = f'@{chat.username}'
-    user = User.get_or_none(username=chat.username)
-    keepass = opened_databases[chat.username]
+    user = User.get_or_none(chat_id=chat.id)
+    keepass = opened_databases[chat.id]
 
     """Write to new memory file"""
     output = BytesIO()
@@ -688,6 +673,7 @@ dispatcher.add_handler(create_query_handler)
 dispatcher.add_handler(show_group_handler)
 dispatcher.add_handler(unknown_handler)
 
+
 updater.start_polling()
 updater.idle()
 
@@ -697,10 +683,10 @@ logging.info("Stoping bot...")
 users = User.select().where(User.is_opened == True)
 for userr in users:
     try:
-        opened_databases[userr.username].close()
         if userr.chat_id != 0:
+            opened_databases[userr.chat_id].close()
             t_bot.send_message(chat_id=userr.chat_id, text="Bot restarting...")
-            close_proces(userr.username, userr.chat_id)
+            close_proces(userr.chat_id)
     except KeyError as exc:
         logging.error("Key error: " + str(exc))
 
