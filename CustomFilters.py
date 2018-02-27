@@ -6,12 +6,12 @@ from Models import User
 
 class UserExists(BaseFilter):
     def filter(self, message):
-        user = User.get_or_none(username=message.from_user.name)
+        user = User.get_or_none(chat_id=message.chat_id)
         return bool(user)
 
 class PasswordDatabaseExist(BaseFilter):
     def filter(self, message):
-        user = User.get_or_none(username=message.from_user.name)
+        user = User.get_or_none(chat_id=message.chat_id)
         if user:
             return bool(user.file)
         else:
@@ -19,13 +19,13 @@ class PasswordDatabaseExist(BaseFilter):
 
 class IsDatabaseOpened(BaseFilter):
     def filter(self, message):
-        user = User.get_or_none(username=message.from_user.name)
+        user = User.get_or_none(chat_id=message.chat_id)
 
         return user.is_opened
 
 class IsUserInCreateState(BaseFilter):
     def filter(self, message):
-        user = User.get_or_none(username=message.from_user.name)
+        user = User.get_or_none(chat_id=message.chat_id)
 
         return user.create_state
 

@@ -14,7 +14,8 @@ class BaseModel(Model):
 
 
 class User(BaseModel):
-    username = CharField(unique=True)
+    chat_id = IntegerField(default=0, unique=True)
+    username = CharField(unique=True, null=True)
     join_date = DateTimeField()
     file = BlobField(null=True)
     is_opened = BooleanField(default=False)
@@ -23,13 +24,13 @@ class User(BaseModel):
     password_needed = BooleanField(default=True)
     create_state = BooleanField(default=False)
     notification = BooleanField(default=True)
-    chat_id = IntegerField(default=0)
+
 
     class Meta:
         order_by = ('username',)
 
     @classmethod
-    def get_or_none(cls,**kwargs):
+    def get_or_none(cls, **kwargs):
         try:
             return User.get(**kwargs)
         except DoesNotExist:
