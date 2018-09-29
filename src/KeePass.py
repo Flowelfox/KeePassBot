@@ -12,8 +12,11 @@ from lxml import objectify
 from lxml.etree import Element, SubElement
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from Models import User
-from settings import *
+from src.lib.db import save_object
+from src.models import User, DBSession
+from src.settings import *
+
+from src.settings import NUMBER_OF_ENTRIES_ON_PAGE, lock_emo, arrow_up_emo, arrow_left_emo, arrow_right_emo, black_x_emo, x_emo, repeat_emo, pencil_emo, arrow_down_emo, back_emo, new_line, key_emo, folder_emo
 
 
 class ItemType(Enum):
@@ -54,12 +57,12 @@ class BaseKeePass(ABC):
             self.page = int(math.ceil(self.size / NUMBER_OF_ENTRIES_ON_PAGE))
 
     def activate(self):
-        KeePass.active_item = self
+        self._root.active_item = self
 
     def deactivate(self):
-        if KeePass.active_item == self._root.search_group:
+        if self._root.active_item == self._root.search_group:
             self._root.search_group = None
-        KeePass.active_item = self._parent
+        self._root.active_item = self._parent
 
     def get_root(self):
         return self._root
@@ -72,9 +75,8 @@ class BaseKeePass(ABC):
 
 
 class KeePass:
-    active_item = None
-
     def __init__(self, path):
+        self.active_item = None
         self.name = "KeePassManager"
         self.type = ItemType.MANAGER
         self.path = path
@@ -108,7 +110,6 @@ class KeePass:
         self._root_obj = objectify.fromstring(etree.tounicode(base), objectify.makeparser())
 
     def get_user(self):
-        self.user = User.get_or_none(chat_id=self.user.chat_id)
         return self.user
 
     def _init_root_group(self):
@@ -126,7 +127,7 @@ class KeePass:
                     if hasattr(item.AutoType, 'Association'):
                         asoc = {'window': item.AutoType.Association.Window.text,
                                 'key_sec': item.AutoType.Association.KeystrokeSequence.text}
-                    autotype = AutoType(enabled=item.AutoType.Enabled.text,dto=item.AutoType.DataTransferObfuscation.text, association=asoc)
+                    autotype = AutoType(enabled=item.AutoType.Enabled.text, dto=item.AutoType.DataTransferObfuscation.text, association=asoc)
                     new_entry = KeeEntry(root=self, parent=cur_group, icond_id=item.IconID.text, uuid=item.UUID.text, autotype=autotype)
                     for string in item.findall('String'):
                         new_entry.append(EntryString(root=self, parent=new_entry, key=string.Key.text, value=string.Value.text))
@@ -145,18 +146,18 @@ class KeePass:
                             InlineKeyboardButton(text=arrow_up_emo, callback_data="Back"),
                             InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
                             InlineKeyboardButton(text=arrow_right_emo, callback_data="Right")]]
-        if KeePass.active_item == self.root_group:
+        if self.active_item == self.root_group:
             delete_but = InlineKeyboardButton(text=black_x_emo, callback_data="Nothing")
         else:
             delete_but = InlineKeyboardButton(text=x_emo, callback_data="Delete")
         second_row = \
-            [InlineKeyboardButton(text=pencil_emo, callback_data=f"Edit_{KeePass.active_item.uuid}"),
+            [InlineKeyboardButton(text=pencil_emo, callback_data=f"Edit_{self.active_item.uuid}"),
              InlineKeyboardButton(text=repeat_emo, callback_data="Resend"),
              InlineKeyboardButton(text=arrow_down_emo, callback_data="Download"),
              delete_but]
 
-        if KeePass.active_item and KeePass.active_item.type == ItemType.ENTRY:
-            if getattr(KeePass.active_item, 'really_delete', False):
+        if self.active_item and self.active_item.type == ItemType.ENTRY:
+            if getattr(self.active_item, 'really_delete', False):
                 message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                         InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
             elif not self.search_group:
@@ -164,8 +165,8 @@ class KeePass:
             InlineKeyboardMarkup(message_buttons)
         else:
             i = 0
-            if KeePass.active_item != self.root_group:
-                if getattr(KeePass.active_item, 'really_delete', False):
+            if self.active_item != self.root_group:
+                if getattr(self.active_item, 'really_delete', False):
                     message_buttons.append([InlineKeyboardButton(text="Yes, I am sure" + x_emo, callback_data="ReallyDelete"),
                                             InlineKeyboardButton(text="No, keep it" + back_emo, callback_data="NoDelete")])
                 elif not self.search_group:
@@ -173,8 +174,8 @@ class KeePass:
             elif not self.search_group:
                 message_buttons.append(second_row)
 
-            for item in KeePass.active_item.items:
-                if KeePass.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= KeePass.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
+            for item in self.active_item.items:
+                if self.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE >= i >= self.active_item.page * NUMBER_OF_ENTRIES_ON_PAGE - NUMBER_OF_ENTRIES_ON_PAGE:
                     message_buttons.append([InlineKeyboardButton(text=str(item), callback_data=item.uuid)])
                 i += 1
 
@@ -185,13 +186,13 @@ class KeePass:
 
     def open(self, chat_id, password=None, keyfile_path=None):
 
-        self.user = User.get_or_none(chat_id=chat_id)
+        self.user = DBSession.query(User).filter(User.chat_id == chat_id).first()
 
         try:
             with libkeepass.open(filename=self.path, password=password, keyfile=keyfile_path, unprotect=False) as kdb:
                 self.kdb = kdb
                 self.user.is_opened = True
-                self.user.save()
+                save_object(self.user)
                 self._root_obj = kdb.obj_root
                 # print(etree.tounicode(self._root_obj, pretty_print=True))
 
@@ -209,7 +210,7 @@ class KeePass:
             raise IOError("Database not opened")
 
         message_text = ""
-        active_item = KeePass.active_item
+        active_item = self.active_item
 
         if active_item.type == ItemType.ENTRY:
             message_text += "_______" + key_emo + active_item.name + "_______" + new_line
@@ -290,7 +291,7 @@ class KeePass:
     def search(self, word):
         finded_items = self.search_item(word)
 
-        self.search_group = KeeGroup(self, KeePass.active_item, name="Search")
+        self.search_group = KeeGroup(self, self.active_item, name="Search")
         for item in finded_items:
             if isinstance(item, KeeEntry):
                 temp_entry = KeeEntry(self, self.search_group, AutoType(True))
@@ -310,7 +311,7 @@ class KeePass:
             process_type = self.add_edit_state.process_type
 
             """Get parent group"""
-            group_item = KeePass.active_item
+            group_item = self.active_item
             while not group_item.type == ItemType.GROUP:
                 group_item = group_item.get_parent()
 
@@ -324,7 +325,7 @@ class KeePass:
                     group_item.append(entry)
 
                 elif process_type == ProcessType.EDIT:
-                    entry = KeePass.active_item
+                    entry = self.active_item
                     for key, value in self.add_edit_state.get_rawstrings():
                         entry.update_item(key, value)
 
@@ -339,7 +340,7 @@ class KeePass:
                     group_item.append(group)
 
                 elif process_type == ProcessType.EDIT:
-                    group = KeePass.active_item
+                    group = self.active_item
                     for key, value in self.add_edit_state.get_rawstrings():
                         if key == 'Name':
                             group.name = value
@@ -356,7 +357,7 @@ class KeePass:
         self.generate_root()
         self.kdb.obj_root = self._root_obj
 
-        #print(etree.tounicode(self._root_obj, pretty_print=True))
+        # print(etree.tounicode(self._root_obj, pretty_print=True))
 
         """Write to new memory file"""
         output = BytesIO()
@@ -367,7 +368,7 @@ class KeePass:
         """Saving to database"""
         user = self.get_user()
         user.file = output.getvalue()
-        user.save()
+        save_object(user)
 
 
 class AddEditState:
@@ -385,14 +386,14 @@ class AddEditState:
 
         if self.type == ItemType.ENTRY:
             self.fields = {"Title": None,
-                           "Username": None,
+                           "UserName": None,
                            "Password": None,
                            "URL": None,
                            "Notes": None}
-            self.req_fields = ["Title", "Username", "Password"]
+            self.req_fields = ["Title", "Password"]
             self.current_field = "Title"
             if obj is not None:
-                for field_name in self.fields.keys():
+                for field_name in self.fields:
                     self.fields[field_name] = obj.get_item(field_name).value
         if self.type == ItemType.GROUP:
             self.fields = {"Name": None,
@@ -411,8 +412,8 @@ class AddEditState:
         return rawstrings
 
     def get_message(self):
-        message_text = self.__generate_text()
-        message_markup = self.__generate_keyboard()
+        message_text = self._generate_text()
+        message_markup = self._generate_keyboard()
 
         return message_text, message_markup
 
@@ -452,7 +453,7 @@ class AddEditState:
         self.set_cur_field_value(gen_password)
         self.set_cur_field(prev_field)
 
-    def __generate_text(self):
+    def _generate_text(self):
         message_text = "_______" + str(self.type) + "_______" + new_line
         for field in self.fields.keys():
             if self.current_field == field:
@@ -469,7 +470,7 @@ class AddEditState:
 
         return message_text
 
-    def __generate_keyboard(self):
+    def _generate_keyboard(self):
         message_buttons = [[InlineKeyboardButton(text=arrow_left_emo, callback_data="create_Left"),
                             InlineKeyboardButton(text=arrow_up_emo, callback_data="create_Back"),
                             InlineKeyboardButton(text=lock_emo, callback_data="Lock"),
@@ -723,6 +724,7 @@ class EntryString(BaseKeePass):
             self._parent.name = value
         super().__setattr__(name, value)
 
+
 class AutoType():
 
     def __init__(self, enabled, dto='0', association=None):
@@ -730,7 +732,6 @@ class AutoType():
         self.dto = dto
         self.association = association
         self.type = ItemType.AUTOTYPE
-
 
     def get_xml_element(self):
         # Autotype -----------
@@ -751,4 +752,3 @@ class AutoType():
             key_sec.text = self.association['key_sec']
 
         return autotype
-
