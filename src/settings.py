@@ -75,7 +75,7 @@ logging.config.dictConfig({
                             }
                         })
 try:
-    from .local_settings import *
+    from src.local_settings import *
 except ImportError:
     pass
 
