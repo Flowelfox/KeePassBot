@@ -50,13 +50,13 @@ def open_entry(bot, update, user_data):
 @need_user
 def open_state_key(bot, update, user_data):
     user = user_data['user']
-
-    file = BytesIO()
+    file_path = os.path.join(TEMP_FOLDER, f"{user.chat_id}.key")
+    file = open(file_path, 'wb')
     file_id = update.message.document.file_id
     t_file = bot.get_file(file_id)
     t_file.download(out=file)
     file.seek(0)
-    user_data['key'] = file
+    user_data['key'] = file_path
 
     if user.password_needed:
         bot.send_message(chat_id=user.chat_id, text="Now send me your password")
@@ -122,10 +122,13 @@ def open_db(bot, update, user_data):
         elif not user.password_needed and user.key_file_needed:
             bot.send_message(chat_id=user.chat_id, text=f"Key-file is wrong")
             return OpenStates.KEY
+    finally:
+        if user.key_file_needed:
+            os.remove(user_data['key'])
+
+    """Removing file in temp"""
+    os.remove(db_path)
 
     return conv_success(bot, update, user_data)
 
-    """Removing file in temp"""
-    # os.remove(TEMP_FOLDER + '/' + update.message.from_user.name + '.kdbx')
-    # if user.key_file_needed:
-    #     os.remove(TEMP_FOLDER + '/' + update.message.from_user.name + '.key')
+

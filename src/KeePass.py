@@ -1,5 +1,6 @@
 import base64
 import datetime
+import logging
 import math
 import uuid as uuid_generator
 from abc import ABC
@@ -14,10 +15,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.lib.db import save_object
 from src.models import User, DBSession
-from src.settings import *
-
 from src.settings import NUMBER_OF_ENTRIES_ON_PAGE, lock_emo, arrow_up_emo, arrow_left_emo, arrow_right_emo, black_x_emo, x_emo, repeat_emo, pencil_emo, arrow_down_emo, back_emo, new_line, key_emo, folder_emo
 
+logger = logging.getLogger(__name__)
 
 class ItemType(Enum):
     GROUP = "Group"
@@ -200,7 +200,8 @@ class KeePass:
                 self._init_root_group()
                 self.root_group.activate()
 
-        except IOError:
+        except IOError as e:
+            logger.error(str(e))
             raise IOError("Master password or key-file wrong")
         except UnicodeDecodeError:
             raise IOError("Critical error, please report to administrator.")

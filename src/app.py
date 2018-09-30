@@ -16,6 +16,7 @@ from src.handlers.start import *
 from src.models import User
 from src.settings import BOT_TOKEN, exm_mark_emo, DISTRIBUTION_COMMAND
 
+logger = logging.getLogger(__name__)
 
 # FUNCTIONS
 
