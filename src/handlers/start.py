@@ -28,7 +28,13 @@ open_markup = InlineKeyboardMarkup([[InlineKeyboardButton('Yes', callback_data='
 
 
 def start_entry(bot, update, user_data):
+
     user = DBSession.query(User).filter(User.chat_id == update.message.chat_id).first()
+    if user is None:
+        user = DBSession.query(User).filter(User.name == f"@{update.message.from_user.username if update.message.from_user.username else ''}").first()
+    if user is None:
+        user = DBSession.query(User).filter(User.name == f"{update.message.from_user.first_name if update.message.from_user.first_name else ''} {update.message.from_user.last_name if update.message.from_user.last_name else ''}").first()
+
     if not user:
         user = User()
         user.name = f"{update.message.from_user.first_name if update.message.from_user.first_name else ''} {update.message.from_user.last_name if update.message.from_user.last_name else ''}"
